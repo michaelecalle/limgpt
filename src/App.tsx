@@ -56,6 +56,13 @@ export default function App() {
             detail: { file },
           })
         )
+
+        // on réémet aussi pour le parser FT (sinon le tableau ne se remplit pas)
+        window.dispatchEvent(
+          new CustomEvent("ft:import-pdf", {
+            detail: { file },
+          })
+        )
       }
     }
     window.addEventListener("lim:import-pdf", handler as EventListener)
