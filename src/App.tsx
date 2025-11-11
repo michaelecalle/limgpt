@@ -12,10 +12,16 @@ import LTV from "./components/LIM/LTV"
 import FT from "./components/LIM/FT"
 import { APP_VERSION } from "./components/version"
 
-type DebugLine = {
-  ts: string
-  msg: string
-}
+/**
+ * App.tsx — version propre de l'écran LIM.
+ *
+ * BUT :
+ * - Afficher une seule FT (celle gérée par components/LIM/FT.tsx,
+ *   celle avec les lignes intermédiaires, vitesses, fusion des lignes rouges).
+ * - Réafficher LTV.
+ * - SUPPRIMER l'ancien rendu FT de preview.
+ * - Garder les 3 modes (bleu / vert / rouge).
+ */
 
 export default function App() {
   const [pdfMode, setPdfMode] = React.useState<"blue" | "green" | "red">("blue")
@@ -28,17 +34,6 @@ export default function App() {
   const [rawPdfFile, setRawPdfFile] = React.useState<File | null>(null)
   const [pdfPageImages, setPdfPageImages] = React.useState<string[]>([])
 
-  // petit log pour iPad
-  const [debugEvents, setDebugEvents] = React.useState<DebugLine[]>([])
-
-  function pushDebug(msg: string) {
-    const ts = new Date().toLocaleTimeString()
-    setDebugEvents((prev) => {
-      const next = [{ ts, msg }, ...prev]
-      return next.slice(0, 15)
-    })
-  }
-
   // réception du PDF
   React.useEffect(() => {
     const handler = (e: Event) => {
@@ -46,27 +41,21 @@ export default function App() {
       const file = ce.detail?.file as File | undefined
       if (file) {
         setRawPdfFile(file)
-        pushDebug("event lim:import-pdf reçu")
+        console.log("[App] PDF brut reçu =", file)
+
+        // URL pour l'iframe (mode rouge sans images)
         const url = URL.createObjectURL(file)
         setPdfUrl((old) => {
           if (old) URL.revokeObjectURL(old)
           return url
         })
 
-        // on réémet le même fichier pour le parser rouge
+        // on réémet le même fichier pour le parser rouge (images)
         window.dispatchEvent(
           new CustomEvent("lim:pdf-raw", {
             detail: { file },
           })
         )
-        pushDebug("event lim:pdf-raw émis")
-        // et pour le FT
-        window.dispatchEvent(
-          new CustomEvent("ft:import-pdf", {
-            detail: { file },
-          })
-        )
-        pushDebug("event ft:import-pdf émis")
       }
     }
     window.addEventListener("lim:import-pdf", handler as EventListener)
@@ -81,7 +70,7 @@ export default function App() {
       const ce = e as CustomEvent
       const mode = ce.detail?.mode as "blue" | "green" | "red" | undefined
       if (mode) {
-        pushDebug(`event lim:pdf-mode-change → ${mode}`)
+        console.log("[App] mode reçu =", mode)
         setPdfMode(mode)
       }
     }
@@ -97,7 +86,7 @@ export default function App() {
       const ce = e as CustomEvent
       const images = ce.detail?.images as string[] | undefined
       if (Array.isArray(images)) {
-        pushDebug(`images reçues du parser rouge: ${images.length}`)
+        console.log("[App] images de pages reçues =", images)
         setPdfPageImages(images)
       }
     }
@@ -120,42 +109,14 @@ export default function App() {
     }
   }, [])
 
-  // DEBUG: ce que renvoient vraiment les parseurs
-  React.useEffect(() => {
-    const onLimParsed = (e: Event) => {
-      const ce = e as CustomEvent<any>
-      // on tronque pour pas inonder
-      const payload = JSON.stringify(ce.detail ?? {}).slice(0, 200)
-      pushDebug(`lim:parsed → ${payload}`)
-    }
-    const onFtParsed = (e: Event) => {
-      const ce = e as CustomEvent<any>
-      const payload = JSON.stringify(ce.detail ?? {}).slice(0, 200)
-      pushDebug(`ft:parsedRaw → ${payload}`)
-    }
-    const onFtHeures = (e: Event) => {
-      const ce = e as CustomEvent<any>
-      const payload = JSON.stringify(ce.detail ?? {}).slice(0, 200)
-      pushDebug(`ft:heures → ${payload}`)
-    }
-
-    window.addEventListener("lim:parsed", onLimParsed as EventListener)
-    window.addEventListener("ft:parsedRaw", onFtParsed as EventListener)
-    window.addEventListener("ft:heures", onFtHeures as EventListener)
-
-    return () => {
-      window.removeEventListener("lim:parsed", onLimParsed as EventListener)
-      window.removeEventListener("ft:parsedRaw", onFtParsed as EventListener)
-      window.removeEventListener("ft:heures", onFtHeures as EventListener)
-    }
-  }, [])
-
   return (
     <main className="p-2 sm:p-4 h-screen flex flex-col">
+      {/* conteneur principal */}
       <div className="flex-1 min-h-0 flex flex-col">
+        {/* Bandeau titre */}
         <TitleBar />
 
-        {/* MODE BLEU */}
+        {/* MODE BLEU : rendu dédié */}
         {pdfMode === "blue" && (
           <div className="mt-3 flex-1 min-h-0">
             <div
@@ -168,17 +129,21 @@ export default function App() {
               <div className="text-[600px] leading-none font-semibold tracking-tight select-none">
                 LIM
               </div>
-              <div className="mt-2 text-7xl italic tracking-wide select-none">Version {APP_VERSION}</div>
+              <div className="mt-2 text-7xl italic tracking-wide select-none">
+                Version {APP_VERSION}
+              </div>
             </div>
           </div>
         )}
 
-        {/* MODE ROUGE */}
+        {/* MODE ROUGE : rendu dédié */}
         {pdfMode === "red" && (
           <div className="mt-3 flex-1 min-h-0">
             <div
               className={
-                isDark ? "h-full rounded-2xl bg-black/80 overflow-auto" : "h-full rounded-2xl bg-zinc-100 overflow-auto"
+                isDark
+                  ? "h-full rounded-2xl bg-black/80 overflow-auto"
+                  : "h-full rounded-2xl bg-zinc-100 overflow-auto"
               }
             >
               {pdfPageImages.length > 0 ? (
@@ -211,7 +176,7 @@ export default function App() {
           </div>
         )}
 
-        {/* MODE VERT */}
+        {/* MODE VERT : on le REND TOUJOURS mais on le CACHE si pas vert */}
         <div
           className={
             pdfMode === "green"
@@ -219,26 +184,21 @@ export default function App() {
               : "mt-3 mx-auto max-w-7xl flex-1 min-h-0 flex flex-col hidden"
           }
         >
+          {/* Bloc infos */}
           <div className="mt-0">
             <Infos />
           </div>
+
+          {/* Bloc LTV */}
           <div className="mt-3">
             <LTV />
           </div>
+
+          {/* Bloc FT */}
           <div className="mt-3 flex-1 min-h-0">
             <FT />
           </div>
         </div>
-      </div>
-
-      {/* Panneau debug iPad */}
-      <div className="mt-2 bg-black/80 text-green-200 text-xs rounded-md p-2 max-h-40 overflow-auto">
-        <div className="font-semibold mb-1">DEBUG iPad</div>
-        {debugEvents.map((l, idx) => (
-          <div key={idx}>
-            [{l.ts}] {l.msg}
-          </div>
-        ))}
       </div>
     </main>
   )
