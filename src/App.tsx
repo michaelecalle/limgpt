@@ -6,7 +6,6 @@ import "./lib/limParser"
 import "./lib/ftParser"
 import React from "react"
 
-
 import TitleBar from "./components/LIM/TitleBar"
 import Infos from "./components/LIM/Infos"
 import LTV from "./components/LIM/LTV"
@@ -33,6 +32,21 @@ export default function App() {
   const [pdfUrl, setPdfUrl] = React.useState<string | null>(null)
   const [rawPdfFile, setRawPdfFile] = React.useState<File | null>(null)
   const [pdfPageImages, setPdfPageImages] = React.useState<string[]>([])
+
+  // 🔍 petit log d’events pour l’iPad
+  const [eventLog, setEventLog] = React.useState<
+    Array<{ ts: string; type: string; payload: any }>
+  >([])
+
+  const pushLog = React.useCallback((type: string, payload: any) => {
+    setEventLog((prev) => {
+      const next = [
+        { ts: new Date().toISOString().slice(11, 19), type, payload },
+        ...prev,
+      ]
+      return next.slice(0, 5)
+    })
+  }, [])
 
   // réception du PDF
   React.useEffect(() => {
@@ -107,6 +121,41 @@ export default function App() {
     }
   }, [])
 
+  // 🟢 écoute des events parseurs (c’est ça qu’on veut voir sur iPad)
+  React.useEffect(() => {
+    const onLim = (e: Event) => {
+      const ce = e as CustomEvent
+      pushLog("lim:parsed", ce.detail)
+    }
+    const onFtRaw = (e: Event) => {
+      const ce = e as CustomEvent
+      pushLog("ft:parsedRaw", {
+        pageCount: ce.detail?.pageCount,
+        pages: Array.isArray(ce.detail?.pages)
+          ? ce.detail.pages.map((p: any) => ({
+              page: p.page,
+              mode: p.mode,
+              len: (p.text || "").length,
+            }))
+          : null,
+      })
+    }
+    const onFtHeures = (e: Event) => {
+      const ce = e as CustomEvent
+      pushLog("ft:heures", ce.detail)
+    }
+
+    window.addEventListener("lim:parsed", onLim as EventListener)
+    window.addEventListener("ft:parsedRaw", onFtRaw as EventListener)
+    window.addEventListener("ft:heures", onFtHeures as EventListener)
+
+    return () => {
+      window.removeEventListener("lim:parsed", onLim as EventListener)
+      window.removeEventListener("ft:parsedRaw", onFtRaw as EventListener)
+      window.removeEventListener("ft:heures", onFtHeures as EventListener)
+    }
+  }, [pushLog])
+
   return (
     <main className="p-2 sm:p-4 h-screen flex flex-col">
       {/* conteneur principal */}
@@ -176,11 +225,11 @@ export default function App() {
 
         {/* MODE VERT : on le REND TOUJOURS mais on le CACHE si pas vert */}
         <div
-            className={
-              pdfMode === "green"
-                ? "mt-3 mx-auto max-w-7xl flex-1 min-h-0 flex flex-col"
-                : "mt-3 mx-auto max-w-7xl flex-1 min-h-0 flex flex-col hidden"
-            }
+          className={
+            pdfMode === "green"
+              ? "mt-3 mx-auto max-w-7xl flex-1 min-h-0 flex flex-col"
+              : "mt-3 mx-auto max-w-7xl flex-1 min-h-0 flex flex-col hidden"
+          }
         >
           {/* Bloc infos */}
           <div className="mt-0">
@@ -195,6 +244,22 @@ export default function App() {
           {/* Bloc FT */}
           <div className="mt-3 flex-1 min-h-0">
             <FT />
+          </div>
+
+          {/* panneau debug */}
+          <div className="mt-3 rounded-xl bg-black/80 text-green-200 text-xs p-2 max-h-40 overflow-auto">
+            <div className="font-mono mb-1 text-[10px] uppercase tracking-wide text-green-100">
+              Debug events (iPad)
+            </div>
+            {eventLog.length === 0 ? (
+              <div className="text-green-400/70">— aucun event pour le moment —</div>
+            ) : (
+              eventLog.map((ev, i) => (
+                <pre key={i} className="whitespace-pre-wrap break-all text-[11px] mb-1">
+                  [{ev.ts}] {ev.type} → {JSON.stringify(ev.payload)}
+                </pre>
+              ))
+            )}
           </div>
         </div>
       </div>
