@@ -164,7 +164,7 @@ export default function App() {
           </div>
         )}
 
-        {/* MODE VERT (rendu permanent mais caché si pas vert) */}
+        {/* MODE VERT */}
         <div
           className={
             pdfMode === "green"
