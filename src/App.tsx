@@ -34,40 +34,17 @@ export default function App() {
   const [rawPdfFile, setRawPdfFile] = React.useState<File | null>(null)
   const [pdfPageImages, setPdfPageImages] = React.useState<string[]>([])
 
-  // 🔒 tentative de garder l'écran allumé (si iPad/Safari l'autorise)
-  React.useEffect(() => {
-    let wakeLock: any = null
+  // 👇 nouveau: référence vers la vidéo “keep awake”
+  const keepAwakeRef = React.useRef<HTMLVideoElement | null>(null)
 
-    async function requestWakeLock() {
-      try {
-        // @ts-expect-error API pas parfaitement typée
-        if ("wakeLock" in navigator) {
-          // @ts-expect-error
-          wakeLock = await navigator.wakeLock.request("screen")
-          console.log("[App] wake lock obtenu")
-        } else {
-          console.log("[App] wake lock non disponible sur ce navigateur")
-        }
-      } catch (err) {
-        console.log("[App] wake lock refusé / impossible :", err)
-      }
-    }
-
-    requestWakeLock()
-
-    const handleVis = () => {
-      if (document.visibilityState === "visible" && !wakeLock) {
-        requestWakeLock()
-      }
-    }
-    document.addEventListener("visibilitychange", handleVis)
-
-    return () => {
-      document.removeEventListener("visibilitychange", handleVis)
-      if (wakeLock && typeof wakeLock.release === "function") {
-        wakeLock.release().catch(() => {})
-      }
-    }
+  // 👇 fonction qui essaie de lire la vidéo discrètement
+  const tryPlayKeepAwake = React.useCallback(() => {
+    const vid = keepAwakeRef.current
+    if (!vid) return
+    // certaines versions d’iOS n’aiment pas les play() silencieux → on attrape l’erreur et on l’ignore
+    void vid.play().catch(() => {
+      // rien, c’est juste pour éviter un warning
+    })
   }, [])
 
   // réception du PDF
@@ -99,13 +76,16 @@ export default function App() {
             detail: { file },
           })
         )
+
+        // à chaque import, on relance la vidéo
+        tryPlayKeepAwake()
       }
     }
     window.addEventListener("lim:import-pdf", handler as EventListener)
     return () => {
       window.removeEventListener("lim:import-pdf", handler as EventListener)
     }
-  }, [])
+  }, [tryPlayKeepAwake])
 
   // changement de mode (blue/green/red)
   React.useEffect(() => {
@@ -115,13 +95,15 @@ export default function App() {
       if (mode) {
         console.log("[App] mode reçu =", mode)
         setPdfMode(mode)
+        // on profite de chaque action de l’utilisateur pour relancer la vidéo
+        tryPlayKeepAwake()
       }
     }
     window.addEventListener("lim:pdf-mode-change", handler as EventListener)
     return () => {
       window.removeEventListener("lim:pdf-mode-change", handler as EventListener)
     }
-  }, [])
+  }, [tryPlayKeepAwake])
 
   // images de pages (parser rouge)
   React.useEffect(() => {
@@ -152,8 +134,24 @@ export default function App() {
     }
   }, [])
 
+  // 👇 au premier rendu, on tente une fois de plus
+  React.useEffect(() => {
+    tryPlayKeepAwake()
+  }, [tryPlayKeepAwake])
+
   return (
     <main className="p-2 sm:p-4 h-screen flex flex-col">
+      {/* petite vidéo muette, invisible, pour empêcher la veille iPad */}
+      {/* place un fichier dans public/keepawake.mp4 */}
+      <video
+        ref={keepAwakeRef}
+        src="/keepawake.mp4"
+        muted
+        playsInline
+        loop
+        style={{ width: 0, height: 0, opacity: 0, position: "absolute", pointerEvents: "none" }}
+      />
+
       {/* conteneur principal */}
       <div className="flex-1 min-h-0 flex flex-col">
         {/* Bandeau titre */}
