@@ -2,7 +2,10 @@
 
 import "./lib/ltvParser"
 import "./lib/redPdfParser"
+import "./lib/limParser"
+import "./lib/ftParser"
 import React from "react"
+
 
 import TitleBar from "./components/LIM/TitleBar"
 import Infos from "./components/LIM/Infos"
