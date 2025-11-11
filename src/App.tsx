@@ -34,6 +34,42 @@ export default function App() {
   const [rawPdfFile, setRawPdfFile] = React.useState<File | null>(null)
   const [pdfPageImages, setPdfPageImages] = React.useState<string[]>([])
 
+  // 🔒 tentative de garder l'écran allumé (si iPad/Safari l'autorise)
+  React.useEffect(() => {
+    let wakeLock: any = null
+
+    async function requestWakeLock() {
+      try {
+        // @ts-expect-error API pas parfaitement typée
+        if ("wakeLock" in navigator) {
+          // @ts-expect-error
+          wakeLock = await navigator.wakeLock.request("screen")
+          console.log("[App] wake lock obtenu")
+        } else {
+          console.log("[App] wake lock non disponible sur ce navigateur")
+        }
+      } catch (err) {
+        console.log("[App] wake lock refusé / impossible :", err)
+      }
+    }
+
+    requestWakeLock()
+
+    const handleVis = () => {
+      if (document.visibilityState === "visible" && !wakeLock) {
+        requestWakeLock()
+      }
+    }
+    document.addEventListener("visibilitychange", handleVis)
+
+    return () => {
+      document.removeEventListener("visibilitychange", handleVis)
+      if (wakeLock && typeof wakeLock.release === "function") {
+        wakeLock.release().catch(() => {})
+      }
+    }
+  }, [])
+
   // réception du PDF
   React.useEffect(() => {
     const handler = (e: Event) => {
