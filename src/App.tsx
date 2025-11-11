@@ -99,44 +99,6 @@ export default function App() {
     }
   }, [])
 
-  // empêcher la mise en veille (si dispo)
-  React.useEffect(() => {
-    let wakeLock: any = null
-
-    async function requestWakeLock() {
-      try {
-        if ("wakeLock" in navigator) {
-          // @ts-ignore
-          wakeLock = await navigator.wakeLock.request("screen")
-          wakeLock?.addEventListener?.("release", () => {
-            console.log("[wakeLock] relâché")
-          })
-          console.log("[wakeLock] actif")
-        } else {
-          console.log("[wakeLock] non supporté")
-        }
-      } catch (err) {
-        console.log("[wakeLock] échec", err)
-      }
-    }
-
-    requestWakeLock()
-
-    const onVisibility = () => {
-      if (document.visibilityState === "visible") {
-        requestWakeLock()
-      }
-    }
-    document.addEventListener("visibilitychange", onVisibility)
-
-    return () => {
-      document.removeEventListener("visibilitychange", onVisibility)
-      if (wakeLock) {
-        wakeLock.release?.()
-      }
-    }
-  }, [])
-
   return (
     <main className="p-2 sm:p-4 h-screen flex flex-col">
       <div className="flex-1 min-h-0 flex flex-col">
