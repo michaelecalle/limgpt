@@ -12,16 +12,6 @@ import LTV from "./components/LIM/LTV"
 import FT from "./components/LIM/FT"
 import { APP_VERSION } from "./components/version"
 
-/**
- * App.tsx — version propre de l'écran LIM.
- *
- * BUT :
- * - Afficher une seule FT (celle gérée par components/LIM/FT.tsx,
- *   celle avec les lignes intermédiaires, vitesses, fusion des lignes rouges).
- * - Réafficher LTV.
- * - SUPPRIMER l'ancien rendu FT de preview.
- */
-
 export default function App() {
   const [pdfMode, setPdfMode] = React.useState<"blue" | "green" | "red">("blue")
   const [isDark, setIsDark] = React.useState(() => {
@@ -30,23 +20,15 @@ export default function App() {
     return html.classList.contains("dark") || html.getAttribute("data-theme") === "dark"
   })
   const [pdfUrl, setPdfUrl] = React.useState<string | null>(null)
-  const [rawPdfFile, setRawPdfFile] = React.useState<File | null>(null)
   const [pdfPageImages, setPdfPageImages] = React.useState<string[]>([])
+  const [debugLines, setDebugLines] = React.useState<string[]>([])
 
-  // 🔍 petit log d’events pour l’iPad
-  const [eventLog, setEventLog] = React.useState<
-    Array<{ ts: string; type: string; payload: any }>
-  >([])
-
-  const pushLog = React.useCallback((type: string, payload: any) => {
-    setEventLog((prev) => {
-      const next = [
-        { ts: new Date().toISOString().slice(11, 19), type, payload },
-        ...prev,
-      ]
-      return next.slice(0, 5)
+  function pushDebug(msg: string) {
+    setDebugLines((prev) => {
+      const line = new Date().toISOString().slice(11, 19) + " " + msg
+      return [line, ...prev].slice(0, 40)
     })
-  }, [])
+  }
 
   // réception du PDF
   React.useEffect(() => {
@@ -54,20 +36,29 @@ export default function App() {
       const ce = e as CustomEvent
       const file = ce.detail?.file as File | undefined
       if (file) {
-        setRawPdfFile(file)
-        console.log("[App] PDF brut reçu =", file)
+        pushDebug(`lim:import-pdf reçu: ${file.name}`)
+
         const url = URL.createObjectURL(file)
         setPdfUrl((old) => {
           if (old) URL.revokeObjectURL(old)
           return url
         })
 
-        // on réémet le même fichier pour le parser rouge
+        // parser rouge (images)
         window.dispatchEvent(
           new CustomEvent("lim:pdf-raw", {
             detail: { file },
           })
         )
+        pushDebug("event lim:pdf-raw émis")
+
+        // parser FT (il écoute ft:import-pdf, pas lim:import-pdf)
+        window.dispatchEvent(
+          new CustomEvent("ft:import-pdf", {
+            detail: { file },
+          })
+        )
+        pushDebug("event ft:import-pdf émis")
       }
     }
     window.addEventListener("lim:import-pdf", handler as EventListener)
@@ -76,13 +67,12 @@ export default function App() {
     }
   }, [])
 
-  // changement de mode (blue/green/red)
+  // changement de mode
   React.useEffect(() => {
     const handler = (e: Event) => {
       const ce = e as CustomEvent
       const mode = ce.detail?.mode as "blue" | "green" | "red" | undefined
       if (mode) {
-        console.log("[App] mode reçu =", mode)
         setPdfMode(mode)
       }
     }
@@ -98,7 +88,7 @@ export default function App() {
       const ce = e as CustomEvent
       const images = ce.detail?.images as string[] | undefined
       if (Array.isArray(images)) {
-        console.log("[App] images de pages reçues =", images)
+        pushDebug(`images reçues du parser rouge: ${images.length}`)
         setPdfPageImages(images)
       }
     }
@@ -121,49 +111,30 @@ export default function App() {
     }
   }, [])
 
-  // 🟢 écoute des events parseurs (c’est ça qu’on veut voir sur iPad)
+  // logs en provenance des parseurs (si jamais on en émet côté parseur)
   React.useEffect(() => {
-    const onLim = (e: Event) => {
+    const onLimParsed = (e: Event) => {
       const ce = e as CustomEvent
-      pushLog("lim:parsed", ce.detail)
+      pushDebug("lim:parsed reçu (infos LIM)")
+      // on pourrait logguer ce.detail ici si besoin
     }
-    const onFtRaw = (e: Event) => {
+    const onFtParsed = (e: Event) => {
       const ce = e as CustomEvent
-      pushLog("ft:parsedRaw", {
-        pageCount: ce.detail?.pageCount,
-        pages: Array.isArray(ce.detail?.pages)
-          ? ce.detail.pages.map((p: any) => ({
-              page: p.page,
-              mode: p.mode,
-              len: (p.text || "").length,
-            }))
-          : null,
-      })
+      pushDebug("ft:parsedRaw reçu (FT)")
     }
-    const onFtHeures = (e: Event) => {
-      const ce = e as CustomEvent
-      pushLog("ft:heures", ce.detail)
-    }
-
-    window.addEventListener("lim:parsed", onLim as EventListener)
-    window.addEventListener("ft:parsedRaw", onFtRaw as EventListener)
-    window.addEventListener("ft:heures", onFtHeures as EventListener)
-
+    window.addEventListener("lim:parsed", onLimParsed as EventListener)
+    window.addEventListener("ft:parsedRaw", onFtParsed as EventListener)
     return () => {
-      window.removeEventListener("lim:parsed", onLim as EventListener)
-      window.removeEventListener("ft:parsedRaw", onFtRaw as EventListener)
-      window.removeEventListener("ft:heures", onFtHeures as EventListener)
+      window.removeEventListener("lim:parsed", onLimParsed as EventListener)
+      window.removeEventListener("ft:parsedRaw", onFtParsed as EventListener)
     }
-  }, [pushLog])
+  }, [])
 
   return (
     <main className="p-2 sm:p-4 h-screen flex flex-col">
-      {/* conteneur principal */}
       <div className="flex-1 min-h-0 flex flex-col">
-        {/* Bandeau titre */}
         <TitleBar />
 
-        {/* MODE BLEU : rendu dédié */}
         {pdfMode === "blue" && (
           <div className="mt-3 flex-1 min-h-0">
             <div
@@ -183,7 +154,6 @@ export default function App() {
           </div>
         )}
 
-        {/* MODE ROUGE : rendu dédié */}
         {pdfMode === "red" && (
           <div className="mt-3 flex-1 min-h-0">
             <div
@@ -223,7 +193,7 @@ export default function App() {
           </div>
         )}
 
-        {/* MODE VERT : on le REND TOUJOURS mais on le CACHE si pas vert */}
+        {/* MODE VERT : on le rend toujours mais on le cache si pas vert */}
         <div
           className={
             pdfMode === "green"
@@ -231,37 +201,34 @@ export default function App() {
               : "mt-3 mx-auto max-w-7xl flex-1 min-h-0 flex flex-col hidden"
           }
         >
-          {/* Bloc infos */}
           <div className="mt-0">
             <Infos />
           </div>
 
-          {/* Bloc LTV */}
           <div className="mt-3">
             <LTV />
           </div>
 
-          {/* Bloc FT */}
           <div className="mt-3 flex-1 min-h-0">
             <FT />
           </div>
-
-          {/* panneau debug */}
-          <div className="mt-3 rounded-xl bg-black/80 text-green-200 text-xs p-2 max-h-40 overflow-auto">
-            <div className="font-mono mb-1 text-[10px] uppercase tracking-wide text-green-100">
-              Debug events (iPad)
-            </div>
-            {eventLog.length === 0 ? (
-              <div className="text-green-400/70">— aucun event pour le moment —</div>
-            ) : (
-              eventLog.map((ev, i) => (
-                <pre key={i} className="whitespace-pre-wrap break-all text-[11px] mb-1">
-                  [{ev.ts}] {ev.type} → {JSON.stringify(ev.payload)}
-                </pre>
-              ))
-            )}
-          </div>
         </div>
+      </div>
+
+      {/* petit panneau de debug iPad en bas à droite */}
+      <div className="fixed bottom-2 right-2 z-50 max-h-40 w-72 overflow-auto rounded-md bg-black/80 text-xs text-green-200 p-2">
+        <div className="font-bold mb-1">DEBUG iPad</div>
+        {debugLines.length === 0 ? (
+          <div className="text-zinc-400">aucun log pour l’instant</div>
+        ) : (
+          <ul className="space-y-1">
+            {debugLines.map((l, i) => (
+              <li key={i} className="leading-tight">
+                {l}
+              </li>
+            ))}
+          </ul>
+        )}
       </div>
     </main>
   )
