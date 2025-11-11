@@ -11,11 +11,11 @@ function toTitleNumber(s?: string | null): string | undefined {
   if (!m) return undefined
   const n = parseInt(m[0], 10)
   if (!Number.isFinite(n)) return undefined
-  return String(n) // supprime tous les zéros initiaux
+  return String(n)
 }
 
 /**
- * TitleBar — LIMGPT α2.1 (visuel harmonisé)
+ * TitleBar — LIMGPT α2.1 (+ keep-awake video trigger)
  */
 export default function TitleBar() {
   // ----- HORLOGE -----
@@ -27,14 +27,12 @@ export default function TitleBar() {
   }
   const [clock, setClock] = useState(() => formatTime(new Date()))
   const [autoScroll, setAutoScroll] = useState(false)
-  // 0 = pas de position, 1 = position mais pas placée, 2 = position placée
   const [gpsState, setGpsState] = useState<0 | 1 | 2>(0)
-  // indicateur mode horaire (juste visuel pour l’instant)
   const [hourlyMode, setHourlyMode] = useState(false)
   const [pdfMode, setPdfMode] = useState<'blue' | 'green' | 'red'>('blue')
 
-  // 👇 nouvelle ref pour la vidéo anti-veille
-  const keepAwakeVideoRef = useRef<HTMLVideoElement>(null)
+  // ➜ vidéo de réveil
+  const keepAwakeRef = useRef<HTMLVideoElement | null>(null)
 
   useEffect(() => {
     window.dispatchEvent(
@@ -90,7 +88,7 @@ export default function TitleBar() {
     applyTheme(dark)
   }, [dark])
 
-  // ----- LUMINOSITÉ (globale) -----
+  // ----- LUMINOSITÉ -----
   const getInitialBrightness = () => {
     if (typeof window === 'undefined') return 1
     const raw = localStorage.getItem('brightness')
@@ -134,19 +132,16 @@ export default function TitleBar() {
   const onPickPdf: React.ChangeEventHandler<HTMLInputElement> = (e) => {
     const file = e.target.files?.[0]
     if (file) {
-      // événement existant : pour le reste de l’app
       window.dispatchEvent(new CustomEvent('lim:import-pdf', { detail: { file } }))
       window.dispatchEvent(new CustomEvent('ft:import-pdf', { detail: { file } }))
       window.dispatchEvent(new CustomEvent('lim:pdf-raw', { detail: { file } }))
-
-      // on passe en mode vert
       setPdfMode('green')
 
-      // 👇 tentative de lancer la vidéo anti-veille (user gesture = change input)
-      const v = keepAwakeVideoRef.current
+      // 👉 on tente de lancer la vidéo keep-awake juste après le geste utilisateur
+      const v = keepAwakeRef.current
       if (v) {
-        v.play().catch(() => {
-          // si iOS refuse, on n'explose pas l'app
+        v.play().catch((err) => {
+          console.warn('[keepawake] play() refusé', err)
         })
       }
     }
@@ -184,7 +179,6 @@ export default function TitleBar() {
   }, [])
   const titleSuffix = trainDisplay ? ` ${trainDisplay}` : ''
 
-  // ----- ICÔNES -----
   const IconSun = () => (
     <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" className="opacity-80">
       <circle cx="12" cy="12" r="4" />
@@ -200,7 +194,11 @@ export default function TitleBar() {
   )
   const IconFile = () => (
     <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" className="opacity-80">
-      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" fill="currentColor" fillOpacity=".06" />
+      <path
+        d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"
+        fill="currentColor"
+        fillOpacity=".06"
+      />
       <path d="M14 2v6h6" fill="none" stroke="currentColor" strokeWidth="1.5" />
     </svg>
   )
@@ -213,11 +211,13 @@ export default function TitleBar() {
       <div className="flex items-center justify-between gap-2">
         {/* Gauche — Heure + boutons état */}
         <div className="flex min-w-0 items-center gap-2">
-          <div className="tabular-nums text-[18px] leading-none font-semibold tracking-tight">{clock}</div>
+          <div className="tabular-nums text-[18px] leading-none font-semibold tracking-tight">
+            {clock}
+          </div>
 
           {pdfMode === 'green' && (
             <>
-              {/* Bouton Play/Pause auto-scroll */}
+              {/* Auto-scroll */}
               <button
                 type="button"
                 onClick={() => {
@@ -234,7 +234,11 @@ export default function TitleBar() {
                       : 'bg-zinc-200/70 text-zinc-800 dark:bg-zinc-700/70 dark:text-zinc-100'
                   }
                 `}
-                title={autoScroll ? 'Désactiver le défilement automatique' : 'Activer le défilement automatique'}
+                title={
+                  autoScroll
+                    ? 'Désactiver le défilement automatique'
+                    : 'Activer le défilement automatique'
+                }
               >
                 {autoScroll ? (
                   <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
@@ -248,7 +252,7 @@ export default function TitleBar() {
                 )}
               </button>
 
-              {/* Indicateur GPS */}
+              {/* GPS */}
               <button
                 type="button"
                 onClick={() => {
@@ -261,20 +265,10 @@ export default function TitleBar() {
                   ${gpsState === 1 ? 'border-[3px] border-orange-400 text-orange-500 dark:text-orange-300' : ''}
                   ${gpsState === 2 ? 'border-[3px] border-emerald-400 text-emerald-500 dark:text-emerald-300' : ''}
                 `}
-                title={
-                  gpsState === 0
-                    ? 'GPS indisponible'
-                    : gpsState === 1
-                      ? 'GPS OK mais pas calé sur la ligne'
-                      : 'GPS calé sur la ligne'
-                }
               >
                 <span className="relative z-10">GPS</span>
                 {gpsState === 0 && (
-                  <span
-                    className="pointer-events-none absolute inset-1 z-20"
-                    aria-hidden
-                  >
+                  <span className="pointer-events-none absolute inset-1 z-20" aria-hidden>
                     <span
                       className="absolute top-1/2 left-1 right-1 h-[2px] bg-red-500/80"
                       style={{ transform: 'rotate(-28deg)', transformOrigin: 'center' }}
@@ -283,7 +277,7 @@ export default function TitleBar() {
                 )}
               </button>
 
-              {/* Indicateur mode horaire (juste visuel) */}
+              {/* Mode horaire */}
               <button
                 type="button"
                 onClick={() => setHourlyMode((v) => !v)}
@@ -294,7 +288,6 @@ export default function TitleBar() {
                       : 'border-[3px] border-red-500 text-red-500 dark:text-red-400'
                   }
                 `}
-                title={hourlyMode ? 'Mode horaire actif (simulé)' : 'Mode horaire inactif (simulé)'}
               >
                 <span>🕑</span>
               </button>
@@ -304,7 +297,9 @@ export default function TitleBar() {
 
         {/* Centre — Titre */}
         <div className="min-w-0 flex-1 text-center">
-          <div className="truncate text-[18px] leading-none font-semibold tracking-tight">LIM{titleSuffix}</div>
+          <div className="truncate text-[18px] leading-none font-semibold tracking-tight">
+            LIM{titleSuffix}
+          </div>
         </div>
 
         {/* Droite — Contrôles */}
@@ -322,7 +317,6 @@ export default function TitleBar() {
               className={`relative z-10 w-16 rounded-lg px-2.5 py-1 font-medium flex items-center justify-center gap-1 ${
                 !dark ? 'text-zinc-900 dark:text-zinc-100' : 'opacity-75'
               }`}
-              aria-pressed={!dark}
               onClick={() => setDark(false)}
             >
               <IconSun /> Jour
@@ -332,7 +326,6 @@ export default function TitleBar() {
               className={`relative z-10 w-16 rounded-lg px-2.5 py-1 font-medium flex items-center justify-center gap-1 ${
                 dark ? 'text-zinc-900 dark:text-zinc-100' : 'opacity-75'
               }`}
-              aria-pressed={dark}
               onClick={() => setDark(true)}
             >
               <IconMoon /> Nuit
@@ -354,7 +347,6 @@ export default function TitleBar() {
                 setBrightness(clipped / 100)
               }}
               className="h-1.5 w-28 cursor-pointer appearance-none rounded-full bg-zinc-200 outline-none accent-blue-600 dark:bg-zinc-700"
-              aria-label="Réglage de luminosité"
             />
             <span className="w-9 tabular-nums text-[11px] text-right opacity-60">{brightnessPct}%</span>
           </div>
@@ -405,13 +397,6 @@ export default function TitleBar() {
                   ? 'h-8 px-3 text-xs rounded-md bg-emerald-500 text-white flex items-center gap-1'
                   : 'h-8 px-3 text-xs rounded-md bg-red-500 text-white flex items-center gap-1'
             }
-            title={
-              pdfMode === 'blue'
-                ? 'Importer un PDF'
-                : pdfMode === 'green'
-                  ? 'mode normal (clic: mode secours, double-clic: revenir à Importer PDF)'
-                  : 'mode secours (clic: mode normal, double-clic: revenir à Importer PDF)'
-            }
           >
             {pdfMode === 'blue' && <IconFile />}
             {pdfMode === 'blue' && 'Importer PDF'}
@@ -429,14 +414,22 @@ export default function TitleBar() {
         </div>
       </div>
 
-      {/* 👇 vidéo anti-veille, invisible */}
+      {/* vidéo keep-awake quasi invisible */}
       <video
-        ref={keepAwakeVideoRef}
+        ref={keepAwakeRef}
         src="/keepawake.mp4"
-        playsInline
-        muted
         loop
-        className="hidden"
+        playsInline
+        style={{
+          position: 'fixed',
+          bottom: 0,
+          right: 0,
+          width: '1px',
+          height: '1px',
+          opacity: 0.01,
+          pointerEvents: 'none',
+          zIndex: 1,
+        }}
       />
     </header>
   )
