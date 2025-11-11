@@ -1,0 +1,184 @@
+@import "tailwindcss";
+
+/* ===============================
+   LIMGPT α2.1 — Transitions globales
+   - Ajoute un fondu doux lors des changements de thème (Jour/Nuit)
+   - Lisse la variation de luminosité (filter: brightness())
+   - Respecte prefers-reduced-motion
+   =============================== */
+
+:root {
+  --surface: 255 255 255;
+  --surface-2: 248 250 252;
+  --text: 9 9 11;
+  --muted: 113 113 122;
+  --border: 228 228 231;
+
+  --primary: 37 99 235;
+  --primary-contrast: 255 255 255;
+
+  --ok: 22 163 74;
+  --warn: 234 179 8;
+  --err: 220 38 38;
+}
+
+:root.dark {
+  --surface: 24 24 27;
+  --surface-2: 39 39 42;
+  --text: 244 244 245;
+  --muted: 161 161 170;
+  --border: 63 63 70;
+
+  --primary: 59 130 246;
+  --primary-contrast: 255 255 255;
+
+  --ok: 34 197 94;
+  --warn: 250 204 21;
+  --err: 248 113 113;
+}
+
+html, body, #root, main {
+  background-color: rgb(var(--surface));
+  color: rgb(var(--text));
+  /* Transitions globales */
+  transition:
+    background-color .28s ease,
+    color .28s ease,
+    filter .28s ease;
+}
+
+/* Réduction des animations si l'utilisateur le demande */
+@media (prefers-reduced-motion: reduce) {
+  html, body, #root, main {
+    transition: none;
+  }
+}
+
+/* Sélection */
+::selection { background: color-mix(in oklab, rgb(var(--primary)) 30%, transparent); }
+
+/* Cartes / panneaux */
+.card {
+  border-radius: 1rem; /* ~ rounded-2xl */
+  box-shadow: 0 2px 8px rgba(0,0,0,.05);
+  border: 1px solid rgb(var(--border));
+  background-color: rgb(var(--surface));
+}
+.card-muted {
+  border-radius: 1rem;
+  box-shadow: 0 2px 8px rgba(0,0,0,.05);
+  border: 1px solid rgb(var(--border));
+  background-color: rgb(var(--surface-2));
+}
+.card-glass {
+  border-radius: 1rem;
+  border: 1px solid rgb(var(--border));
+  backdrop-filter: blur(8px);
+  background-color: color-mix(in oklab, rgb(var(--surface)) 82%, transparent);
+  box-shadow: 0 2px 12px rgba(0,0,0,.06);
+}
+
+/* En-têtes */
+.surface-header {
+  background: linear-gradient(
+    to bottom,
+    color-mix(in oklab, rgb(var(--surface-2)) 92%, transparent),
+    color-mix(in oklab, rgb(var(--surface)) 92%, transparent)
+  );
+  border-bottom: 1px solid rgb(var(--border));
+  box-shadow: 0 2px 6px rgba(0,0,0,.05);
+  transition: background-color .28s ease, color .28s ease;
+}
+
+/* Boutons */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: .5rem;
+  border-radius: .75rem;  /* rounded-xl */
+  padding: .5rem .875rem; /* px-3.5 py-2 */
+  font-size: .875rem;     /* text-sm */
+  font-weight: 500;
+  line-height: 1.25rem;
+  border: 1px solid rgb(var(--border));
+  background-color: rgb(var(--surface-2));
+  color: rgb(var(--text));
+  transition: opacity .15s ease, transform .05s ease, background-color .28s ease, color .28s ease, border-color .28s ease;
+}
+.btn:hover { opacity: .9; }
+.btn:active { transform: translateY(.5px); }
+
+.btn-primary {
+  border-color: color-mix(in oklab, rgb(var(--primary)) 20%, rgb(var(--border)));
+  background-color: rgb(var(--primary));
+  color: rgb(var(--primary-contrast));
+}
+
+/* Badges */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 9999px;
+  padding: .125rem .625rem; /* py-0.5 px-2.5 */
+  font-size: .75rem;
+  font-weight: 500;
+  border: 1px solid rgb(var(--border));
+  background-color: color-mix(in oklab, rgb(var(--surface-2)) 75%, transparent);
+  transition: background-color .28s ease, color .28s ease, border-color .28s ease;
+}
+.badge.ok   { background-color: rgba(var(--ok) / 0.12);  color: rgb(var(--ok));  border-color: color-mix(in oklab, rgb(var(--ok)) 35%, rgb(var(--border))); }
+.badge.warn { background-color: rgba(var(--warn) / 0.16);color: rgb(var(--warn));border-color: color-mix(in oklab, rgb(var(--warn)) 35%, rgb(var(--border))); }
+.badge.err  { background-color: rgba(var(--err) / 0.14); color: rgb(var(--err)); border-color: color-mix(in oklab, rgb(var(--err)) 35%, rgb(var(--border))); }
+
+/* Inputs */
+.input, .select, .textarea {
+  width: 100%;
+  border-radius: .75rem;
+  padding: .5rem .75rem;
+  font-size: .875rem;
+  border: 1px solid rgb(var(--border));
+  background-color: rgb(var(--surface));
+  color: rgb(var(--text));
+  outline: none;
+  transition: box-shadow .15s ease, background-color .28s ease, color .28s ease, border-color .28s ease;
+}
+.input::placeholder, .textarea::placeholder { color: rgb(var(--muted)); }
+
+/* Tables */
+.table {
+  width: 100%;
+  border: 1px solid rgb(var(--border));
+  border-radius: .75rem;
+  font-size: .875rem;
+  background-color: rgb(var(--surface));
+  overflow: hidden;
+  transition: background-color .28s ease, color .28s ease, border-color .28s ease;
+}
+.table thead th {
+  text-align: left;
+  font-weight: 600;
+  background-color: rgb(var(--surface-2));
+  border-bottom: 1px solid rgb(var(--border));
+  padding: .625rem .75rem;
+}
+.table tbody td {
+  border-top: 1px solid rgb(var(--border));
+  padding: .625rem .75rem;
+}
+
+/* Utilitaires */
+.divider { height: 1px; background-color: rgb(var(--border)); }
+.dim { opacity: .65; }
+.elev-1 { box-shadow: 0 2px 8px rgba(0,0,0,.04); }
+.elev-2 { box-shadow: 0 4px 16px rgba(0,0,0,.06); }
+
+/* Focus visible accessible */
+:where(button, [role="button"], a, input, select, textarea):focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px rgb(255 255 255 / 0.9), 0 0 0 4px rgb(var(--primary) / 0.9);
+  transition: box-shadow .15s ease;
+}
+.dark :where(button, [role="button"], a, input, select, textarea):focus-visible {
+  box-shadow: 0 0 0 2px rgb(0 0 0 / 0.8), 0 0 0 4px rgb(var(--primary) / 0.85);
+}
