@@ -7,9 +7,13 @@
 */
 import * as pdfjsLib from "pdfjs-dist"
 import type { PDFDocumentProxy, TextItem } from "pdfjs-dist/types/src/display/api"
+// @ts-ignore
 import workerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url"
-import { ocrFallback } from "./ocrFallback"
+
 ;(pdfjsLib as any).GlobalWorkerOptions.workerSrc = workerUrl
+
+// on NE charge PLUS l’OCR ici en statique
+let ocrFallbackFn: null | ((file: File) => Promise<string>) = null
 
 export type Fields = {
   tren?: string
@@ -60,7 +64,6 @@ function pickTrain(s: string): string | undefined {
 function detectRelation(txt: string, trenPadded?: string): string | undefined {
   const s = normalize(txt)
 
-  // Canonical patterns (allow optional spaces around hyphens)
   const p1 = /Limite\s+ADIF\s*[-–]?\s*LFPSA\s*[-–]?\s*Barcelona\s+Sants/i
   const p2 = /Barcelona\s+Sants\s*[-–]?\s*Limite\s+ADIF\s*[-–]?\s*LFPSA/i
   const p3 = /Can\s+Tunis\s+AV\s*[-–]?\s*Barcelona\s+Sants/i
@@ -70,7 +73,6 @@ function detectRelation(txt: string, trenPadded?: string): string | undefined {
   if (p3.test(s)) return "Can Tunis AV - Barcelona Sants"
   if (p4.test(s)) return "Barcelona Sants - Can Tunis AV"
 
-  // Fallback by train number rules
   if (trenPadded && /^\d{5}$/.test(trenPadded)) {
     const first = trenPadded[0]
     const num = parseInt(trenPadded, 10)
@@ -85,74 +87,59 @@ function detectRelation(txt: string, trenPadded?: string): string | undefined {
   return undefined
 }
 
-// --------- FECHA extraction (return raw string; UI formats) ---------
 function extractFechaRaw(s: string): string | undefined {
   const S = s
-
-  // 1) "FECHA/DATE ... <date-token>"
-  //    - capture strictly the first date token after the label
   const mLblNum = S.match(/\b(?:FECHA|DATE)\b[^\d\r\n]{0,20}([0-3]?\d[\/.\-][01]?\d[\/.\-](?:\d{2}|\d{4}))/i)
   if (mLblNum) return mLblNum[1]
 
   const mLblTxt = S.match(/\b(?:FECHA|DATE)\b[^\dA-Za-z\u00C0-\u017F\r\n]{0,20}(\d{1,2}\s+[A-Za-z\u00C0-\u017F\-]+\s+\d{4})/i)
   if (mLblTxt) return mLblTxt[1]
 
-  // 2) First numeric date near top 600 chars
   const head = S.slice(0, 600)
   const mNum = head.match(/\b([0-3]?\d)[\/.\-]([01]?\d)[\/.\-](\d{2}|\d{4})\b/)
   if (mNum) return `${mNum[1]}/${mNum[2]}/${mNum[3]}`
 
-  // 3) First textual FR/ES date near top
   const mTxt = head.match(/\b(\d{1,2})\s+([A-Za-z\u00C0-\u017F\-]+)\s+(\d{4})\b/)
   if (mTxt) return `${mTxt[1]} ${mTxt[2]} ${mTxt[3]}`
 
   return undefined
 }
 
-// --------- COMPOSICIÓN extraction ---------
 function extractComposicion(s: string): string | undefined {
-  // A) Label-based
   const mLbl = s.match(/\b(?:COMPOSICI[ÓO]N|COMPOSICION)\b\s*[:\-–]?\s*([A-Z0-9]{1,4})\b/i)?.[1]
   if (mLbl) return mLbl.toUpperCase()
 
-  // B) Pattern near longitud/masa: "<UNIT> 200m - 433t"
   const mLong = s.match(/\b(2UM|1UM|UM|US|DU|SOLO|SIMPLE)\b\s+\d{2,4}\s*m\b/i)?.[1]
   if (mLong) return mLong.toUpperCase()
 
-  // C) Anywhere token
   const mAny = s.match(/\b(2UM|1UM|UM|US|DU|SOLO|SIMPLE)\b/i)?.[1]
   if (mAny) return mAny.toUpperCase()
 
   return undefined
 }
 
-// -------------- core text extraction --------------
 export function extractFields(text: string): Fields {
   const s = normalize(text || "")
 
-  // Train
   const trenPadded = pickTrain(s)
   const tren = trenPadded ?? undefined
 
-  // Type
   const type =
     s.match(/\b(?:TYPE|TIPO(?:\s+(?:DE\s+TREN|TREN))?)\s*[:\-–]?\s*([A-Z]\d{2,3})\b/i)?.[1] ??
     s.match(/\bT\d{2,3}\b/)?.[0]
 
-  // Relation (ORIGEN/DESTINO)
   const relation = detectRelation(s, trenPadded)
 
-  // FECHA
   const fechaRaw = extractFechaRaw(s)
-  const fecha = fechaRaw // UI will prettify
+  const fecha = fechaRaw
 
-  // Material / Linea / longueur / masse
   const material = "TGV 2N2"
   const linea =
-    s.match(/\b(?:LINEA|L[ÍI]NEA|LINEAS|L[ÍI]NEAS)\b\s*[:\-–]?\s*([0-9]{2,4}(?:\s*[-–]\s*[0-9]{2,4})?)/i)?.[1] ??
-    undefined
-  const lengthMeters = cleanNumber(s.match(/(\d{2,4})(?=\s*m\b)/i)?.[1] || s.match(/(\d{2,4})(?=m\b)/i)?.[1])
-  const massTons = cleanNumber(s.match(/(\d{2,4})(?=\s*t\b)/i)?.[1] || s.match(/(\d{2,4})(?=t\b)/i)?.[1])
+    s.match(/\b(?:LINEA|L[ÍI]NEA|LINEAS|L[ÍI]NEAS)\b\s*[:\-–]?\s*([0-9]{2,4}(?:\s*[-–]\s*[0-9]{2,4})?)/i)?.[1] ?? undefined
+  const lengthMeters =
+    cleanNumber(s.match(/(\d{2,4})(?=\s*m\b)/i)?.[1] || s.match(/(\d{2,4})(?=m\b)/i)?.[1]) ?? undefined
+  const massTons =
+    cleanNumber(s.match(/(\d{2,4})(?=\s*t\b)/i)?.[1] || s.match(/(\d{2,4})(?=t\b)/i)?.[1]) ?? undefined
 
   const composicion = extractComposicion(s)
 
@@ -175,7 +162,6 @@ export function extractFields(text: string): Fields {
   return out
 }
 
-// -------------- pdf.js + OCR pipeline --------------
 async function readPdfFirstPage(file: File): Promise<string> {
   const buf = await file.arrayBuffer()
   const loading = await (pdfjsLib as any).getDocument({ data: buf })
@@ -195,7 +181,8 @@ function textLooksUsable(hay: string): boolean {
 function mergePreferA(a: any, b: any) {
   const out: any = { ...a }
   for (const k of Object.keys(b)) {
-    const vA = a[k], vB = b[k]
+    const vA = a[k],
+      vB = b[k]
     if (vA == null || vA === "" || (typeof vA === "number" && !Number.isFinite(vA))) {
       if (vB != null && vB !== "") out[k] = vB
     }
@@ -207,19 +194,33 @@ export async function handleFile(file: File): Promise<Fields> {
   const textA = await readPdfFirstPage(file)
   const fieldsA = extractFields(textA || "")
 
-  const needsOCR = !textLooksUsable(textA || "") ||
-    (!fieldsA.type || !fieldsA.fecha || !fieldsA.composicion || !fieldsA.longitud || !fieldsA.trenPadded || !fieldsA.origenDestino)
+  const needsOCR =
+    !textLooksUsable(textA || "") ||
+    (!fieldsA.type ||
+      !fieldsA.fecha ||
+      !fieldsA.composicion ||
+      !fieldsA.longitud ||
+      !fieldsA.trenPadded ||
+      !fieldsA.origenDestino)
 
   let fields = fieldsA
+
   if (needsOCR) {
-    const textB = await ocrFallback(file)
-    const fieldsB = extractFields(textB || "")
-    fields = mergePreferA(fieldsA, fieldsB)
+    try {
+      if (!ocrFallbackFn) {
+        const mod = await import("./ocrFallback")
+        ocrFallbackFn = mod.ocrFallback
+      }
+      const textB = await ocrFallbackFn(file)
+      const fieldsB = extractFields(textB || "")
+      fields = mergePreferA(fieldsA, fieldsB)
+    } catch (err) {
+      console.warn("[limParser] OCR fallback failed, keeping PDF fields only", err)
+    }
   }
 
   window.dispatchEvent(new CustomEvent("lim:parsed", { detail: fields }))
 
-  // Set browser title "LIM <number>" if available
   try {
     const t = fields.trenPadded ?? fields.tren
     if (t && typeof document !== "undefined") {

@@ -15,10 +15,17 @@
 import * as pdfjsLib from "pdfjs-dist"
 import type { PDFDocumentProxy, TextItem } from "pdfjs-dist/types/src/display/api"
 import workerSrc from "pdfjs-dist/build/pdf.worker.min.mjs?url"
-import { ocrFallbackMultiWithLayout } from "./ocrFallback"
 
 // on aligne pdfjs sur la même méthode que tu utilises déjà côté autres parseurs
 ;(pdfjsLib as any).GlobalWorkerOptions.workerSrc = workerSrc
+
+// ⬇️ NOUVEAU : on ne charge plus l’OCR en statique, on le chargera au moment où on en a besoin
+let ocrMultiFn:
+  | null
+  | ((
+      file: File,
+      pageCount: number
+    ) => Promise<{ pagesText: string[]; layout: Array<{ page: number; items: any[] }> }>) = null
 
 // Heuristique très simple : est-ce que le texte natif PDF de cette page ressemble à quelque chose d'exploitable ?
 function looksUsable(raw: string): boolean {
@@ -45,7 +52,6 @@ async function extractAllPagesPdfText(pdf: PDFDocumentProxy): Promise<string[]> 
   return out
 }
 
-/**
 /**
  * Un code COM/TECN/CONC valide (durée d'arrêt / intervalle en minutes) :
  * - 1 ou 2 chiffres (0 à 59)
@@ -77,8 +83,6 @@ function isComCodeToken(token: string): boolean {
 
   return true
 }
-
-
 
 async function handleFileFT(file: File) {
   // 1. Charger le PDF
@@ -127,12 +131,24 @@ async function handleFileFT(file: File) {
   // 2. Récup texte PDF natif pour toutes les pages
   const pdfTexts = await extractAllPagesPdfText(pdf)
 
-  // 3. Récup OCR Vision multi-pages (texte + layout)
+  // 3. Récup OCR Vision multi-pages (texte + layout) — mais en lazy + tolérant
   //
   // pagesText = texte brut par page (normalisé)
   // ocrLayout = [{ page, items:[{ text, x, y, w, h }, ...] }, ...]
-  const { pagesText: ocrPagesText, layout: ocrLayout } =
-    await ocrFallbackMultiWithLayout(file, pdf.numPages)
+  let ocrPagesText: string[] = Array(pdf.numPages).fill("")
+  let ocrLayout: Array<{ page: number; items: any[] }> = []
+
+  try {
+    if (!ocrMultiFn) {
+      const mod = await import("./ocrFallback")
+      ocrMultiFn = mod.ocrFallbackMultiWithLayout
+    }
+    const { pagesText, layout } = await ocrMultiFn(file, pdf.numPages)
+    ocrPagesText = pagesText
+    ocrLayout = layout
+  } catch (err) {
+    console.warn("[ftParser] OCR indisponible en production, on reste sur le texte PDF natif.", err)
+  }
 
   // On garde la même structure logique qu'avant : un tableau de texte OCR par page
   const ocrPagesGuess = ocrPagesText
@@ -167,10 +183,10 @@ async function handleFileFT(file: File) {
     pageCount: pdf.numPages,
   }
 
-  // 6. LOG DEBUG (affichage complet pour inspection manuelle) + détection d'heures (texte brut)
+  // 6. LOG DEBUG
   console.log(
     "[ftParser] Résumé extraction:",
-    mergedPerPage.map(p => ({ page: p.page, mode: p.mode, len: p.text.length }))
+    mergedPerPage.map((p) => ({ page: p.page, mode: p.mode, len: p.text.length }))
   )
 
   for (const p of mergedPerPage) {
@@ -178,7 +194,7 @@ async function handleFileFT(file: File) {
     console.log(p.text)
 
     // 🕐 Extraction des heures au format HH:MM
-    const heures = Array.from(p.text.matchAll(/\b\d{1,2}:\d{2}\b/g)).map(m => m[0])
+    const heures = Array.from(p.text.matchAll(/\b\d{1,2}:\d{2}\b/g)).map((m) => m[0])
 
     if (heures.length > 0) {
       console.log(`[ftParser] Heures détectées sur page ${p.page}:`, heures)
@@ -206,7 +222,7 @@ async function handleFileFT(file: File) {
   // 8. Émettre l'event des heures agrégées (identique à avant)
   const heuresByPage: Array<{ page: number; mode: string; heures: string[] }> = []
   for (const p of mergedPerPage) {
-    const heures = Array.from(p.text.matchAll(/\b\d{1,2}:\d{2}\b/g)).map(m => m[0])
+    const heures = Array.from(p.text.matchAll(/\b\d{1,2}:\d{2}\b/g)).map((m) => m[0])
     heuresByPage.push({ page: p.page, mode: p.mode, heures })
   }
   window.dispatchEvent(
@@ -253,12 +269,11 @@ async function handleFileFT(file: File) {
       .toString()
       .toLowerCase()
       .normalize("NFD")
-      .replace(/[\u0300-\u036f]/g, "") // enlève les diacritiques
-      .replace(/[^a-z]/g, "") // ne garde que les lettres
-      .replace(/rn/g, "m") // OCR classique "rn" pour "m"
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/[^a-z]/g, "")
+      .replace(/rn/g, "m")
   }
 
-  // Utilisé uniquement pour le debug (sélection de quelques tokens intéressants)
   const matchHeader = (s: string) => {
     const n = normalizeHeaderToken(s)
     return (
@@ -281,7 +296,6 @@ async function handleFileFT(file: File) {
     return x + w / 2
   }
 
-  // Détection des vrais en-têtes (bloqueo / dependencia / com / hora / técn / conc / radio)
   function findHeaders(items: TI[]) {
     const headers = {
       bloqueo: [] as TI[],
@@ -304,13 +318,11 @@ async function handleFileFT(file: File) {
       else if (n === "hora") headers.hora.push(it)
       else if (n === "tecn") headers.tecn.push(it)
       else if (n === "conc") headers.conc.push(it)
-      // Certains PDF écrivent "Radio" sur deux lignes: "Ra" / "dio"
       else if (n === "radio" || n === "ra" || n === "dio") headers.radio.push(it)
     }
 
     return headers
   }
-
 
   function bestByWidth(arr: TI[]) {
     if (!arr.length) return null
@@ -330,22 +342,15 @@ async function handleFileFT(file: File) {
   const codesCFlat: string[] = []
   const codesCResolvedItems: Array<{ page: number; heure: string; com: string }> = []
 
-  // toutes les valeurs CONC alignées (toutes pages confondues) pour debug
   const concFlat: string[] = []
-
-  // correspondances CONC ↔ HORA (toutes pages confondues)
   const concResolvedItems: Array<{ page: number; heure: string; conc: string }> = []
 
-  // Bande COM globale (entre fin "Dependencia" et début "Hora") détectée
-  // sur une page avec en-têtes complets, à réutiliser pour les pages suivantes.
   let globalComXMin: number | null = null
   let globalComXMax: number | null = null
 
-  // Bande TÉCN globale (entre fin "Hora" et début "Conc")
   let globalTecnXMin: number | null = null
   let globalTecnXMax: number | null = null
 
-  // Bande CONC globale (entre fin "Técn" et début "Radio")
   let globalConcXMin: number | null = null
   let globalConcXMax: number | null = null
 
@@ -356,20 +361,15 @@ async function handleFileFT(file: File) {
     const meta = mergedPerPage[pageNum - 1]
     const mode = meta?.mode ?? "pdf"
 
-    // Flag: est-ce qu'on a dû basculer sur le layout OCR (Google Vision) ?
     let usedOcrLayout = false
 
     let items: TI[] = []
 
     if (mode === "pdf") {
-      // Cas normal : on fait confiance à la couche texte PDF
       items = Array.isArray(p.items) ? (p.items as TI[]) : []
 
-      // Petit filet de sécurité : si vraiment rien, on tente le layout OCR
-      if (!items.length && Array.isArray((ocrLayout as any))) {
-        const ocrPage = (ocrLayout as any).find(
-          (op: any) => Number(op.page) === pageNum
-        )
+      if (!items.length && Array.isArray(ocrLayout)) {
+        const ocrPage = (ocrLayout as any).find((op: any) => Number(op.page) === pageNum)
         if (ocrPage && Array.isArray(ocrPage.items) && ocrPage.items.length) {
           items = (ocrPage.items as any[]).map((w: any) => ({
             str: String(w.text ?? ""),
@@ -385,12 +385,8 @@ async function handleFileFT(file: File) {
         }
       }
     } else {
-      // mode === "ocr" : fichier scanné ou glitché -> on ignore la couche texte PDF
-      // et on utilise DIRECTEMENT le layout OCR Vision pour cette page.
-      if (Array.isArray((ocrLayout as any))) {
-        const ocrPage = (ocrLayout as any).find(
-          (op: any) => Number(op.page) === pageNum
-        )
+      if (Array.isArray(ocrLayout)) {
+        const ocrPage = (ocrLayout as any).find((op: any) => Number(op.page) === pageNum)
         if (ocrPage && Array.isArray(ocrPage.items) && ocrPage.items.length) {
           items = (ocrPage.items as any[]).map((w: any) => ({
             str: String(w.text ?? ""),
@@ -407,11 +403,8 @@ async function handleFileFT(file: File) {
       }
     }
 
-    // Si, même après tout ça, on n'a rien -> on abandonne pour cette page
     if (!items.length) {
-      console.log(
-        `[ftParser] COM/TECN(page ${pageNum}) ignorée (mode=${mode}, items=${items.length})`
-      )
+      console.log(`[ftParser] COM/TECN(page ${pageNum}) ignorée (mode=${mode}, items=${items.length})`)
       codesCByPage.push({
         page: pageNum,
         values: [],
@@ -422,14 +415,13 @@ async function handleFileFT(file: File) {
       continue
     }
 
-    // DEBUG: quelques tokens utiles (en-têtes ou petits nombres)
     const debugTokens = items
-      .filter(it => {
+      .filter((it) => {
         const s = (it.str || "").toString()
         return matchHeader(s) || isComCodeToken(s)
       })
       .slice(0, 40)
-      .map(it => ({ s: it.str, x: it.x, y: it.y, w: it.w }))
+      .map((it) => ({ s: it.str, x: it.x, y: it.y, w: it.w }))
 
     const headers = findHeaders(items)
     const hDep = bestByWidth(headers.dependencia)
@@ -459,7 +451,6 @@ async function handleFileFT(file: File) {
       sample: debugTokens,
     })
 
-    // Hauteur de la ligne d'en-têtes (approx) : on prend le min des y trouvés
     let yHeader: number | null = null
     const headerYs: number[] = []
     if (hDep) headerYs.push(Number(hDep.y) || 0)
@@ -588,40 +579,29 @@ async function handleFileFT(file: File) {
     }
 
     if (concXMin != null && concXMax != null) {
-      console.log(
-        `[ftParser] CONC(page ${pageNum}) zone [${concXMin.toFixed(
-          1
-        )} ; ${concXMax.toFixed(1)}]`
-      )
+      console.log(`[ftParser] CONC(page ${pageNum}) zone [${concXMin.toFixed(1)} ; ${concXMax.toFixed(1)}]`)
     }
 
-      const valuesCom: string[] = []
+    const valuesCom: string[] = []
     const debugNumsCom: Array<{ val: string; xC: number; y: number }> = []
     const comCandidates: Array<{ value: string; xC: number; y: number }> = []
 
     const tecnCandidates: Array<{ value: string; xC: number; y: number }> = []
     const concCandidates: Array<{ value: string; xC: number; y: number }> = []
 
-    // Debug spécifique colonne CONC : tout ce qui tombe dans la bande X, avant/après filtrage numérique
     const debugConcRawInBand: Array<{ raw: string; xC: number; y: number }> = []
     const debugConcNumericInBand: Array<{ raw: string; xC: number; y: number }> = []
 
-
-    // --- 1er passage : détection des COM dans la bande horizontale ---
+    // --- 1er passage : COM ---
     for (const it of items) {
       const raw = (it.str ?? "").toString().trim()
       if (!isComCodeToken(raw)) continue
 
       const y = Number(it.y) || 0
 
-      // Si on connaît la hauteur de la ligne d'en-têtes, on ne garde que ce qui est en-dessous.
-      // PDF classique: plus on descend, plus y diminue.
-      // OCR (usedOcrLayout = true): les coordonnées sont différentes, on ne filtre PAS par Y,
-      // on se repose uniquement sur la bande horizontale.
       if (!usedOcrLayout && yHeader != null && y >= yHeader) continue
 
       const xC = centerX(it)
-      // Zone horizontale stricte : entre fin "Dependencia" et début "Hora"
       if (xC <= (depEndX as number) || xC >= (horaStartX as number)) continue
 
       valuesCom.push(raw)
@@ -652,7 +632,7 @@ async function handleFileFT(file: File) {
     })
     codesCFlat.push(...valuesCom)
 
-    // --- 1bis : détection des TÉCN dans la bande Hora–Conc (candidats bruts) ---
+    // --- 1bis : TECN candidats
     if (tecnXMin != null && tecnXMax != null) {
       for (const it of items) {
         const raw = (it.str ?? "").toString().trim()
@@ -664,48 +644,35 @@ async function handleFileFT(file: File) {
         const xC = centerX(it)
         if (xC <= tecnXMin || xC >= tecnXMax) continue
 
-        // Candidat TECN brut — sera filtré par alignement avec une heure
         tecnCandidates.push({ value: raw, xC, y })
       }
     }
 
-    // --- 1ter : détection des CONC dans la bande Tecn–Radio (candidats bruts) ---
+    // --- 1ter : CONC candidats
     if (concXMin != null && concXMax != null) {
       for (const it of items) {
         const raw = (it.str ?? "").toString().trim()
         const y = Number(it.y) || 0
 
-        // Filtrage vertical : seulement pour le PDF natif ; en OCR (usedOcrLayout=true) on ne filtre pas par yHeader.
         if (!usedOcrLayout && yHeader != null && y >= yHeader) continue
 
         const xC = centerX(it)
 
-        // On ne s'intéresse qu'aux items dans la bande X CONC
         if (xC <= concXMin || xC >= concXMax) continue
 
-        // Debug : on loggue tout ce qui tombe dans la bande, même si ce n'est pas un nombre propre
         debugConcRawInBand.push({ raw, xC, y })
 
-        // Candidat numérique CONC brut — sera filtré par alignement avec une heure
         if (!isComCodeToken(raw)) continue
 
         concCandidates.push({ value: raw, xC, y })
         debugConcNumericInBand.push({ raw, xC, y })
       }
 
-      // Petit log debug pour comprendre ce que voit l'OCR dans la bande CONC
-      console.log(
-        `[ftParser] CONC(page ${pageNum}) debugRawInBand=`,
-        debugConcRawInBand.slice(0, 30)
-      )
-      console.log(
-        `[ftParser] CONC(page ${pageNum}) debugNumericInBand=`,
-        debugConcNumericInBand.slice(0, 30)
-      )
+      console.log(`[ftParser] CONC(page ${pageNum}) debugRawInBand=`, debugConcRawInBand.slice(0, 30))
+      console.log(`[ftParser] CONC(page ${pageNum}) debugNumericInBand=`, debugConcNumericInBand.slice(0, 30))
     }
 
-
-    // --- 2e passage : détection des HEURES dans la colonne Hora ---
+    // --- 2 : heures ---
     const heureCandidates: Array<{ value: string; xC: number; y: number }> = []
 
     for (const it of items) {
@@ -716,15 +683,12 @@ async function handleFileFT(file: File) {
       if (!usedOcrLayout && yHeader != null && y >= yHeader) continue
 
       const xC = centerX(it)
-      // On considère que la colonne Hora est à droite de horaStartX.
       if (horaStartX != null && xC <= horaStartX) continue
 
       heureCandidates.push({ value: raw, xC, y })
     }
 
-    // Si pas d'heures, on ne peut pas faire d'association fine
     if (!heureCandidates.length) {
-      // On log quand même TECN/CONC, mais la liste sera vide car aucune heure ne permet de valider les candidats.
       if (tecnXMin != null && tecnXMax != null) {
         console.log(
           `[ftParser] TECN(page ${pageNum}) zone [${tecnXMin.toFixed(
@@ -742,11 +706,10 @@ async function handleFileFT(file: File) {
       continue
     }
 
-    // --- Estimation d'une hauteur de ligne moyenne pour fixer une tolérance Y ---
     let verticalTolerance = 0
 
     if (heureCandidates.length >= 2) {
-      const ys = heureCandidates.map(h => h.y).sort((a, b) => a - b)
+      const ys = heureCandidates.map((h) => h.y).sort((a, b) => a - b)
       const deltas: number[] = []
       for (let k = 1; k < ys.length; k++) {
         const d = Math.abs(ys[k] - ys[k - 1])
@@ -754,17 +717,15 @@ async function handleFileFT(file: File) {
       }
       if (deltas.length > 0) {
         const minDelta = Math.min(...deltas)
-        // tolérance: environ la moitié de l'écart vertical moyen entre deux lignes d'heure
         verticalTolerance = minDelta / 2
       }
     }
 
-    // Si on n'a rien pu estimer, on met un petit plancher fixe (coordonnées OCR ~pixels)
     if (verticalTolerance <= 0) {
-      verticalTolerance = 6 // valeur prudente: petite tolérance
+      verticalTolerance = 6
     }
 
-    // --- Association COM ↔ HORA (même page) ---
+    // --- Assoc COM ↔ HORA ---
     if (comCandidates.length && heureCandidates.length) {
       for (const com of comCandidates) {
         let bestHeure: { value: string; xC: number; y: number } | null = null
@@ -780,7 +741,6 @@ async function handleFileFT(file: File) {
 
         if (!bestHeure) continue
 
-        // On n'accepte que les heures vraiment proches en Y
         if (bestDy > verticalTolerance) {
           console.warn(
             `[ftParser] COM(page ${pageNum}) value=${com.value} ignoré: dy=${bestDy.toFixed(
@@ -798,7 +758,7 @@ async function handleFileFT(file: File) {
       }
     }
 
-    // --- Filtrage TECN ↔ HORA : on ne garde que les TECN alignés avec une heure ---
+    // --- TECN filtré ---
     const tecnValuesFiltered: string[] = []
 
     if (tecnCandidates.length && heureCandidates.length && tecnXMin != null && tecnXMax != null) {
@@ -816,8 +776,6 @@ async function handleFileFT(file: File) {
 
         if (!bestHeure) continue
 
-        // ❗ Cœur de la protection contre le "20" de la date :
-        // On n'accepte le TECN que s'il est vraiment sur la même ligne que l'heure.
         if (bestDy > verticalTolerance) {
           console.warn(
             `[ftParser] TECN(page ${pageNum}) value=${t.value} ignoré: dy=${bestDy.toFixed(
@@ -831,21 +789,16 @@ async function handleFileFT(file: File) {
       }
 
       console.log(
-        `[ftParser] TECN(page ${pageNum}) zone [${tecnXMin.toFixed(
-          1
-        )} ; ${tecnXMax.toFixed(1)}] ->`,
+        `[ftParser] TECN(page ${pageNum}) zone [${tecnXMin.toFixed(1)} ; ${tecnXMax.toFixed(1)}] ->`,
         tecnValuesFiltered
       )
     } else if (tecnXMin != null && tecnXMax != null) {
-      // Bande connue mais aucun candidat -> log vide
       console.log(
-        `[ftParser] TECN(page ${pageNum}) zone [${tecnXMin.toFixed(
-          1
-        )} ; ${tecnXMax.toFixed(1)}] -> []`
+        `[ftParser] TECN(page ${pageNum}) zone [${tecnXMin.toFixed(1)} ; ${tecnXMax.toFixed(1)}] -> []`
       )
     }
 
-    // --- Filtrage CONC ↔ HORA : mêmes règles que TECN ---
+    // --- CONC filtré ---
     const concValuesFiltered: string[] = []
 
     if (concCandidates.length && heureCandidates.length && concXMin != null && concXMax != null) {
@@ -863,7 +816,6 @@ async function handleFileFT(file: File) {
 
         if (!bestHeure) continue
 
-        // Une valeur CONC n'est valide que si elle est bien alignée avec une heure
         if (bestDy > verticalTolerance) {
           console.warn(
             `[ftParser] CONC(page ${pageNum}) value=${c.value} ignoré: dy=${bestDy.toFixed(
@@ -881,34 +833,27 @@ async function handleFileFT(file: File) {
         })
       }
 
-      console.log(
-        `[ftParser] CONC(page ${pageNum}) aligné avec HORA ->`,
-        concValuesFiltered
-      )
+      console.log(`[ftParser] CONC(page ${pageNum}) aligné avec HORA ->`, concValuesFiltered)
     } else if (concXMin != null && concXMax != null) {
       console.log(
-        `[ftParser] CONC(page ${pageNum}) zone [${concXMin.toFixed(
-          1
-        )} ; ${concXMax.toFixed(1)}] -> []`
+        `[ftParser] CONC(page ${pageNum}) zone [${concXMin.toFixed(1)} ; ${concXMax.toFixed(1)}] -> []`
       )
     }
 
-    // on accumule toutes les valeurs CONC filtrées pour debug global
     concFlat.push(...concValuesFiltered)
   }
 
-  // 11. Émettre l'event dédié à la colonne C (COM) — brut (par page + flat)
+  // 11. Émettre l'event dédié à la colonne C (COM)
   window.dispatchEvent(
     new CustomEvent("ft:codesC", {
       detail: {
-        byPage: codesCByPage, // [{page, values:[...], headerX, headerY, debug}]
-        flat: codesCFlat, // concat de toutes les pages
+        byPage: codesCByPage,
+        flat: codesCFlat,
       },
     })
   )
 
-  // 11bis. Émettre un event de validation simple sur les codes C (optionnel)
-  const codesCValidation = codesCByPage.map(p => ({
+  const codesCValidation = codesCByPage.map((p) => ({
     page: p.page,
     count: p.values.length,
   }))
@@ -916,23 +861,20 @@ async function handleFileFT(file: File) {
   window.dispatchEvent(
     new CustomEvent("ft:codesC:validation", {
       detail: {
-        summary: codesCValidation, // [{ page, count }]
-        total: codesCFlat.length, // nombre total de valeurs C toutes pages confondues
+        summary: codesCValidation,
+        total: codesCFlat.length,
       },
     })
   )
 
-  // 11ter. Émettre les codes C résolus avec leur heure -> utilisable par FT.tsx
-  // FT.tsx a déjà un listener ft:codesC:resolved qui remplit codesCParHeure[heure] = [COM...]
   window.dispatchEvent(
     new CustomEvent("ft:codesC:resolved", {
       detail: {
-        items: codesCResolvedItems, // [{ page, heure, com }]
+        items: codesCResolvedItems,
       },
     })
   )
 
-  // 11quater. Event debug pour la colonne CONC (valeurs alignées avec HORA, toutes pages)
   window.dispatchEvent(
     new CustomEvent("ft:conc", {
       detail: {
@@ -941,11 +883,10 @@ async function handleFileFT(file: File) {
     })
   )
 
-  // 11quinquies. Event complet CONC ↔ HORA (toutes pages)
   window.dispatchEvent(
     new CustomEvent("ft:conc:resolved", {
       detail: {
-        items: concResolvedItems, // [{ page, heure, conc }]
+        items: concResolvedItems,
       },
     })
   )
