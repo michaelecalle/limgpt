@@ -31,13 +31,16 @@ export default function TitleBar() {
   const [gpsState, setGpsState] = useState<0 | 1 | 2>(0)
   // indicateur mode horaire (juste visuel pour l’instant)
   const [hourlyMode, setHourlyMode] = useState(false)
-    const [pdfMode, setPdfMode] = useState<'blue' | 'green' | 'red'>('blue')
+  const [pdfMode, setPdfMode] = useState<'blue' | 'green' | 'red'>('blue')
+
+  // 👇 nouvelle ref pour la vidéo anti-veille
+  const keepAwakeVideoRef = useRef<HTMLVideoElement>(null)
+
   useEffect(() => {
     window.dispatchEvent(
       new CustomEvent('lim:pdf-mode-change', { detail: { mode: pdfMode } })
     )
   }, [pdfMode])
-
 
   useEffect(() => {
     const t = setInterval(() => setClock(formatTime(new Date())), 1000)
@@ -53,7 +56,7 @@ export default function TitleBar() {
   }
   const getRootEl = (): HTMLElement | null => {
     return (document.getElementById('root') ||
-            document.getElementById('__next')) as HTMLElement | null
+      document.getElementById('__next')) as HTMLElement | null
   }
 
   // ----- THEME Jour/Nuit -----
@@ -78,7 +81,9 @@ export default function TitleBar() {
       root.setAttribute('data-theme', on ? 'dark' : 'light')
       body.setAttribute('data-theme', on ? 'dark' : 'light')
       if (main) main.setAttribute('data-theme', on ? 'dark' : 'light')
-      try { localStorage.setItem('theme', on ? 'dark' : 'light') } catch {}
+      try {
+        localStorage.setItem('theme', on ? 'dark' : 'light')
+      } catch {}
       window.dispatchEvent(new CustomEvent('lim:toggle-theme', { detail: { dark: on } }))
       window.dispatchEvent(new CustomEvent('lim:theme-change', { detail: { dark: on } }))
     }
@@ -92,12 +97,10 @@ export default function TitleBar() {
     if (!raw) return 1
     const n = Number(raw)
     if (!Number.isFinite(n)) return 1
-    // on limite désormais à 1.0 (100%), on ne veut plus monter au-dessus
     const value = n > 3 ? Math.max(0.5, n / 100) : Math.max(0.5, n)
     return Math.min(1, value)
   }
   const [brightness, setBrightness] = useState<number>(getInitialBrightness)
-
 
   useEffect(() => {
     const b = `brightness(${brightness})`
@@ -105,14 +108,22 @@ export default function TitleBar() {
     const body = document.body
     const root = getRootEl()
     const main = getMainEl()
-    ;[html, body, root, main].forEach((el) => { if (el) (el as HTMLElement).style.filter = '' })
+    ;[html, body, root, main].forEach((el) => {
+      if (el) (el as HTMLElement).style.filter = ''
+    })
     if (main) (main as HTMLElement).style.filter = b
     if (root) (root as HTMLElement).style.filter = b
     body.style.filter = b
     html.style.filter = b
-    try { localStorage.setItem('brightness', String(brightness)) } catch {}
+    try {
+      localStorage.setItem('brightness', String(brightness))
+    } catch {}
     window.dispatchEvent(new CustomEvent('lim:brightness-change', { detail: { brightness } }))
-    return () => { ;[html, body, root, main].forEach((el) => { if (el) (el as HTMLElement).style.filter = '' }) }
+    return () => {
+      ;[html, body, root, main].forEach((el) => {
+        if (el) (el as HTMLElement).style.filter = ''
+      })
+    }
   }, [brightness])
 
   const brightnessPct = useMemo(() => Math.round(brightness * 100), [brightness])
@@ -126,17 +137,21 @@ export default function TitleBar() {
       // événement existant : pour le reste de l’app
       window.dispatchEvent(new CustomEvent('lim:import-pdf', { detail: { file } }))
       window.dispatchEvent(new CustomEvent('ft:import-pdf', { detail: { file } }))
-
-      // 🚆 NOUVEAU : on prévient qu’on a le PDF brut, pour fabriquer des images de pages
       window.dispatchEvent(new CustomEvent('lim:pdf-raw', { detail: { file } }))
 
-      // après un import réussi, on passe en mode vert
+      // on passe en mode vert
       setPdfMode('green')
+
+      // 👇 tentative de lancer la vidéo anti-veille (user gesture = change input)
+      const v = keepAwakeVideoRef.current
+      if (v) {
+        v.play().catch(() => {
+          // si iOS refuse, on n'explose pas l'app
+        })
+      }
     }
     if (inputRef.current) inputRef.current.value = ''
   }
-
-
 
   // ----- NUMÉRO DE TRAIN -----
   const [trainDisplay, setTrainDisplay] = useState<string | undefined>(() => {
@@ -185,8 +200,8 @@ export default function TitleBar() {
   )
   const IconFile = () => (
     <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" className="opacity-80">
-      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" fill="currentColor" fillOpacity=".06"/>
-      <path d="M14 2v6h6" fill="none" stroke="currentColor" strokeWidth="1.5"/>
+      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" fill="currentColor" fillOpacity=".06" />
+      <path d="M14 2v6h6" fill="none" stroke="currentColor" strokeWidth="1.5" />
     </svg>
   )
 
@@ -203,7 +218,6 @@ export default function TitleBar() {
           {pdfMode === 'green' && (
             <>
               {/* Bouton Play/Pause auto-scroll */}
-
               <button
                 type="button"
                 onClick={() => {
@@ -214,9 +228,11 @@ export default function TitleBar() {
                   )
                 }}
                 className={`h-7 w-7 rounded-full flex items-center justify-center text-[11px] transition
-                  ${autoScroll
-                    ? 'bg-emerald-500 text-white'
-                    : 'bg-zinc-200/70 text-zinc-800 dark:bg-zinc-700/70 dark:text-zinc-100'}
+                  ${
+                    autoScroll
+                      ? 'bg-emerald-500 text-white'
+                      : 'bg-zinc-200/70 text-zinc-800 dark:bg-zinc-700/70 dark:text-zinc-100'
+                  }
                 `}
                 title={autoScroll ? 'Désactiver le défilement automatique' : 'Activer le défilement automatique'}
               >
@@ -238,7 +254,6 @@ export default function TitleBar() {
                 onClick={() => {
                   const next = ((gpsState + 1) % 3) as 0 | 1 | 2
                   setGpsState(next)
-                  // plus tard : window.dispatchEvent(new CustomEvent('ft:gps-state', { detail: { state: next } }))
                 }}
                 className={`
                   relative h-7 px-3 rounded-full text-xs font-semibold bg-white dark:bg-zinc-900 transition
@@ -273,17 +288,19 @@ export default function TitleBar() {
                 type="button"
                 onClick={() => setHourlyMode((v) => !v)}
                 className={`h-7 w-7 rounded-full flex items-center justify-center text-[12px] bg-white dark:bg-zinc-900 transition
-                  ${hourlyMode ? 'border-[3px] border-emerald-400 text-emerald-500 dark:text-emerald-300' : 'border-[3px] border-red-500 text-red-500 dark:text-red-400'}
+                  ${
+                    hourlyMode
+                      ? 'border-[3px] border-emerald-400 text-emerald-500 dark:text-emerald-300'
+                      : 'border-[3px] border-red-500 text-red-500 dark:text-red-400'
+                  }
                 `}
                 title={hourlyMode ? 'Mode horaire actif (simulé)' : 'Mode horaire inactif (simulé)'}
               >
-                {/* on met un petit cadran simple pour l’instant */}
                 <span>🕑</span>
               </button>
             </>
           )}
         </div>
-
 
         {/* Centre — Titre */}
         <div className="min-w-0 flex-1 text-center">
@@ -295,12 +312,16 @@ export default function TitleBar() {
           {/* Jour/Nuit */}
           <div className="relative inline-flex select-none items-center rounded-xl border p-0.5 text-[11px] shadow-sm border-zinc-200 dark:border-zinc-700">
             <span
-              className={`absolute inset-y-0.5 w-1/2 rounded-lg bg-zinc-200/70 dark:bg-zinc-700/80 transition-transform ${dark ? 'translate-x-full' : 'translate-x-0'}`}
+              className={`absolute inset-y-0.5 w-1/2 rounded-lg bg-zinc-200/70 dark:bg-zinc-700/80 transition-transform ${
+                dark ? 'translate-x-full' : 'translate-x-0'
+              }`}
               aria-hidden
             />
             <button
               type="button"
-              className={`relative z-10 w-16 rounded-lg px-2.5 py-1 font-medium flex items-center justify-center gap-1 ${!dark ? 'text-zinc-900 dark:text-zinc-100' : 'opacity-75'}`}
+              className={`relative z-10 w-16 rounded-lg px-2.5 py-1 font-medium flex items-center justify-center gap-1 ${
+                !dark ? 'text-zinc-900 dark:text-zinc-100' : 'opacity-75'
+              }`}
               aria-pressed={!dark}
               onClick={() => setDark(false)}
             >
@@ -308,7 +329,9 @@ export default function TitleBar() {
             </button>
             <button
               type="button"
-              className={`relative z-10 w-16 rounded-lg px-2.5 py-1 font-medium flex items-center justify-center gap-1 ${dark ? 'text-zinc-900 dark:text-zinc-100' : 'opacity-75'}`}
+              className={`relative z-10 w-16 rounded-lg px-2.5 py-1 font-medium flex items-center justify-center gap-1 ${
+                dark ? 'text-zinc-900 dark:text-zinc-100' : 'opacity-75'
+              }`}
               aria-pressed={dark}
               onClick={() => setDark(true)}
             >
@@ -336,33 +359,27 @@ export default function TitleBar() {
             <span className="w-9 tabular-nums text-[11px] text-right opacity-60">{brightnessPct}%</span>
           </div>
 
-
           {/* Importer PDF / modes */}
           <button
             type="button"
             onClick={() => {
-              // on utilise inputRef pour stocker le timer du clic
               const anyRef = inputRef as any
               const currentInput = anyRef.current as HTMLInputElement | null
 
-              // si un timer existe déjà -> deuxième clic rapide = double-clic
               if (currentInput && (currentInput as any).__pdfClickTimer) {
                 clearTimeout((currentInput as any).__pdfClickTimer)
                 ;(currentInput as any).__pdfClickTimer = null
 
-                // double-clic -> retour au mode bleu
                 if (pdfMode !== 'blue') {
                   setPdfMode('blue')
                 }
                 return
               }
 
-              // sinon, on arme un timer pour le clic simple
               if (currentInput) {
                 ;(currentInput as any).__pdfClickTimer = setTimeout(() => {
                   ;(currentInput as any).__pdfClickTimer = null
 
-                  // clic simple
                   if (pdfMode === 'blue') {
                     handleImportClick()
                   } else if (pdfMode === 'green') {
@@ -372,7 +389,6 @@ export default function TitleBar() {
                   }
                 }, 200)
               } else {
-                // cas très rare : pas de ref dispo -> on fait juste le clic simple
                 if (pdfMode === 'blue') {
                   handleImportClick()
                 } else if (pdfMode === 'green') {
@@ -403,7 +419,6 @@ export default function TitleBar() {
             {pdfMode === 'red' && <span className="font-bold">MODE SECOURS</span>}
           </button>
 
-
           <input
             ref={inputRef}
             type="file"
@@ -411,9 +426,18 @@ export default function TitleBar() {
             onChange={onPickPdf}
             className="hidden"
           />
-
         </div>
       </div>
+
+      {/* 👇 vidéo anti-veille, invisible */}
+      <video
+        ref={keepAwakeVideoRef}
+        src="/keepawake.mp4"
+        playsInline
+        muted
+        loop
+        className="hidden"
+      />
     </header>
   )
 }
