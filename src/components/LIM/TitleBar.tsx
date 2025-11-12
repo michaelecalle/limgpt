@@ -30,6 +30,11 @@ export default function TitleBar() {
   const [gpsState, setGpsState] = useState<0 | 1 | 2>(0)
   const [hourlyMode, setHourlyMode] = useState(false)
   const [pdfMode, setPdfMode] = useState<'blue' | 'green' | 'red'>('blue')
+  // avance/retard affiché à côté de l'heure (ex: "+3 min" ou "-1 min")
+  const [scheduleDelta, setScheduleDelta] = useState<string | null>(null)
+    const [scheduleDeltaIsLarge, setScheduleDeltaIsLarge] = useState(false)
+
+
 
   // ➜ vidéo de réveil
   const keepAwakeRef = useRef<HTMLVideoElement | null>(null)
@@ -177,6 +182,45 @@ export default function TitleBar() {
       window.removeEventListener('lim:train', onTrain as EventListener)
     }
   }, [])
+  // écoute les mises à jour d'avance/retard envoyées par le reste de l'app
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const ce = e as CustomEvent
+      const text = ce?.detail?.text as string | null | undefined
+      const isLarge = !!ce?.detail?.isLargeDelay
+
+      if (text && text.trim().length > 0) {
+        setScheduleDelta(text.trim())
+        setScheduleDeltaIsLarge(isLarge)
+      } else {
+        // si on envoie texte vide ou null -> on efface
+        setScheduleDelta(null)
+        setScheduleDeltaIsLarge(false)
+      }
+    }
+
+    window.addEventListener('lim:schedule-delta', handler as EventListener)
+    return () => {
+      window.removeEventListener('lim:schedule-delta', handler as EventListener)
+    }
+  }, [])
+
+
+    // écoute le mode horaire envoyé par FT
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const ce = e as CustomEvent
+      const enabled = !!ce?.detail?.enabled
+      setHourlyMode(enabled)
+    }
+
+    window.addEventListener('lim:hourly-mode', handler as EventListener)
+    return () => {
+      window.removeEventListener('lim:hourly-mode', handler as EventListener)
+    }
+  }, [])
+
+
   const titleSuffix = trainDisplay ? ` ${trainDisplay}` : ''
 
   const IconSun = () => (
@@ -214,8 +258,23 @@ export default function TitleBar() {
           <div className="tabular-nums text-[18px] leading-none font-semibold tracking-tight">
             {clock}
           </div>
+          {/* indicateur d'avance/retard */}
+          {scheduleDelta && (
+            <span
+              className={
+                scheduleDeltaIsLarge
+                  ? 'text-xs italic text-red-500 dark:text-red-400 leading-none'
+                  : 'text-xs italic text-gray-500 dark:text-gray-400 leading-none'
+              }
+            >
+              {scheduleDelta}
+            </span>
+          )}
+
+
 
           {pdfMode === 'green' && (
+
             <>
               {/* Auto-scroll */}
               <button
@@ -277,20 +336,21 @@ export default function TitleBar() {
                 )}
               </button>
 
-              {/* Mode horaire */}
+              {/* Mode horaire — indicateur seulement, plus cliquable */}
               <button
                 type="button"
-                onClick={() => setHourlyMode((v) => !v)}
-                className={`h-7 w-7 rounded-full flex items-center justify-center text-[12px] bg-white dark:bg-zinc-900 transition
+                className={`h-7 w-7 rounded-full flex items-center justify-center text-[12px] bg-white dark:bg-zinc-900 transition cursor-default
                   ${
                     hourlyMode
                       ? 'border-[3px] border-emerald-400 text-emerald-500 dark:text-emerald-300'
                       : 'border-[3px] border-red-500 text-red-500 dark:text-red-400'
                   }
                 `}
+                aria-pressed={hourlyMode}
               >
                 <span>🕑</span>
               </button>
+
             </>
           )}
         </div>

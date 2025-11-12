@@ -798,18 +798,18 @@ export const FT_LIGNE_IMPAIR: FTEntry[] = [
     vmax_bar: true,
   },
 
-  // Remarque rouge AVANT LA SAGRERA AV (texte légèrement différent côté IMPAIR)
+  // Remarque rouge AVANT LA SAGRERA AV (alignée sur la version de référence)
   {
     pk: "",
     dependencia: "",
     isNoteOnly: true,
-    notes: ["35 VIAS ESTACINAMM. V11, V19 Y V10, V18"],
+    notes: ["35 VIAS ESTACIONAMM. V11, V19 Y V10, V18"],
     bloqueo: "↓ BCA ↓",
     radio: "◯ GSMR",
     rc: 28,
     rc_bar: false,
-    // dans cette zone : 627.7→626.7 = 45
   },
+
 
   {
     pk: "627.7",
@@ -1164,17 +1164,18 @@ export const FT_LIGNE_IMPAIR: FTEntry[] = [
     // idem, hérite 200
   },
 
-  // Remarque rouge AVANT FIGUERES-VILAFANT (IMPAIR)
+  // Remarque rouge AVANT FIGUERES-VILAFANT (alignée sur la version de référence)
   {
     pk: "",
     dependencia: "",
     isNoteOnly: true,
-    notes: ["80 AL PASO VIAS 3, 4 Y 6"],
+    notes: ["80 AL PASO VIAS 3, 4 Y 6", "50 AL PASO VIA 7"],
     bloqueo: "↓ BCA ↓",
     radio: "◯ GSMR",
     rc: 18,
     rc_bar: false,
   },
+
 
   {
     pk: "748.9",

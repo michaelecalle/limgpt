@@ -18,6 +18,9 @@ export default function FT({ variant = "classic" }: FTProps) {
     first: 0,
     last: 0,
   });
+    // ligne "active" quand on est en mode horaire (play)
+  const [activeRowIndex, setActiveRowIndex] = useState<number>(0);
+
  const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
   const el = e.currentTarget;
 
@@ -294,6 +297,278 @@ const vPrintedSegmentsRef = React.useRef<Set<number>>(new Set());
       );
     };
   }, []);
+
+  // -- écoute du bouton play/pause (auto-scroll) venant du TitleBar
+  const [autoScrollEnabled, setAutoScrollEnabled] = useState(false);
+  const autoScrollBaseRef = React.useRef<{ realMin: number; firstHoraMin: number; fixedDelay: number } | null>(null);
+
+
+  useEffect(() => {
+    function handlerAutoScroll(e: any) {
+      const enabled = !!e?.detail?.enabled;
+      console.log("[FT] ft:auto-scroll-change reçu, enabled =", enabled);
+      setAutoScrollEnabled(enabled);
+
+      // on prévient la TitleBar pour qu'elle mette l'icône 🕑 en vert/rouge
+      window.dispatchEvent(
+        new CustomEvent("lim:hourly-mode", {
+          detail: { enabled },
+        })
+      );
+    }
+
+    window.addEventListener("ft:auto-scroll-change", handlerAutoScroll as EventListener);
+
+    return () => {
+      window.removeEventListener("ft:auto-scroll-change", handlerAutoScroll as EventListener);
+    };
+  }, []);
+
+
+  // quand le mode auto-scroll (play) s'allume/s'éteint
+  useEffect(() => {
+    if (!autoScrollEnabled) {
+      // on nettoie l'affichage dans la titlebar
+      window.dispatchEvent(
+        new CustomEvent("lim:schedule-delta", { detail: { text: "" } })
+      );
+      // on oublie la base
+      autoScrollBaseRef.current = null;
+      return;
+    }
+
+    // helpers
+    const toMinutes = (s: string) => {
+      const m = /^(\d{1,2}):(\d{2})$/.exec(s);
+      if (!m) return NaN;
+      return parseInt(m[1], 10) * 60 + parseInt(m[2], 10);
+    };
+    const minutesToHHMM = (mins: number) => {
+      // on replie sur 24h si besoin
+      const total = ((mins % (24 * 60)) + (24 * 60)) % (24 * 60);
+      const hh = Math.floor(total / 60)
+        .toString()
+        .padStart(2, "0");
+      const mm = (total % 60).toString().padStart(2, "0");
+      return `${hh}:${mm}`;
+    };
+
+    // on capture le point de départ (heure réelle + toute première heure FT dispo)
+    const captureBase = () => {
+      const now = new Date();
+      const nowMin = now.getHours() * 60 + now.getMinutes();
+
+      const mainRows = document.querySelectorAll<HTMLTableRowElement>(
+        "table.ft-table tbody tr.ft-row-main"
+      );
+      if (!mainRows.length) return null;
+
+      let firstHoraMin: number | null = null;
+      for (let i = 0; i < mainRows.length; i++) {
+        const tr = mainRows[i];
+        const horaSpan = tr.querySelector<HTMLSpanElement>(
+          "td:nth-child(6) .ft-hora-depart"
+        );
+        if (!horaSpan) continue;
+        const horaText = horaSpan.textContent?.trim() || "";
+        if (!horaText) continue;
+        const rowMin = toMinutes(horaText);
+        if (!Number.isNaN(rowMin)) {
+          firstHoraMin = rowMin;
+          break;
+        }
+      }
+
+      if (firstHoraMin == null) return null;
+
+      // 🔒 on fige l’avance/retard de départ
+      const fixedDelay = nowMin - firstHoraMin;
+
+      return { realMin: nowMin, firstHoraMin, fixedDelay };
+    };
+
+
+    // on crée la base
+    autoScrollBaseRef.current = captureBase();
+
+        if (autoScrollBaseRef.current) {
+      const fixed = autoScrollBaseRef.current.fixedDelay;
+      const text =
+        fixed === 0 ? "0 min" : fixed > 0 ? `+ ${fixed} min` : `- ${-fixed} min`;
+      window.dispatchEvent(
+        new CustomEvent("lim:schedule-delta", {
+          detail: {
+            text,
+            isLargeDelay: Math.abs(fixed) >= 5,
+          },
+        })
+      );
+    }
+
+
+    const updateFromClock = (forcedHHMM?: string) => {
+      // si heure forcée (console), on garde l'ancien comportement
+      if (forcedHHMM && /^\d{1,2}:\d{2}$/.test(forcedHHMM)) {
+        const mainRows = document.querySelectorAll<HTMLTableRowElement>(
+          "table.ft-table tbody tr.ft-row-main"
+        );
+        if (!mainRows.length) return;
+
+        const targetMin = toMinutes(forcedHHMM);
+        if (Number.isNaN(targetMin)) return;
+
+        let exactMatchDomIndex = -1;
+        let lastPastDomIndex = -1;
+
+        for (let i = 0; i < mainRows.length; i++) {
+          const tr = mainRows[i];
+          const horaSpan = tr.querySelector<HTMLSpanElement>(
+            "td:nth-child(6) .ft-hora-depart"
+          );
+          if (!horaSpan) continue;
+          const horaText = horaSpan.textContent?.trim() || "";
+          if (!horaText) continue;
+          const rowMin = toMinutes(horaText);
+          if (Number.isNaN(rowMin)) continue;
+
+          if (rowMin === targetMin && exactMatchDomIndex === -1) {
+            exactMatchDomIndex = i;
+          }
+          if (rowMin <= targetMin) {
+            lastPastDomIndex = i;
+          }
+        }
+
+        const domIndex =
+          exactMatchDomIndex !== -1
+            ? exactMatchDomIndex
+            : lastPastDomIndex !== -1
+            ? lastPastDomIndex
+            : 0;
+
+        const tr = mainRows[domIndex];
+        const dataIndexAttr = tr.getAttribute("data-ft-row");
+        const dataIndex = dataIndexAttr ? parseInt(dataIndexAttr, 10) : domIndex;
+        setActiveRowIndex(dataIndex);
+        return;
+      }
+
+      const base = autoScrollBaseRef.current;
+      if (!base) return;
+
+      // heure réelle actuelle
+      const now = new Date();
+      const nowMin = now.getHours() * 60 + now.getMinutes();
+
+      // minutes écoulées depuis l’activation
+      const elapsed = nowMin - base.realMin;
+
+      // heure FT qu’on veut suivre
+      const effectiveMin = base.firstHoraMin + elapsed;
+      const effectiveHHMM = minutesToHHMM(effectiveMin);
+
+      // on met dans la console exactement ce que tu veux regarder
+      console.log(
+        `[FT][auto] heure réelle = ${minutesToHHMM(
+          nowMin
+        )} | première heure FT = ${minutesToHHMM(
+          base.firstHoraMin
+        )} | diff (minutes depuis activation) = ${elapsed} | heure EFFECTIVE utilisée pour le '>' = ${effectiveHHMM}`
+      );
+
+      // on cherche la ligne FT la plus proche de cette heure effective
+      const mainRows = document.querySelectorAll<HTMLTableRowElement>(
+        "table.ft-table tbody tr.ft-row-main"
+      );
+      if (!mainRows.length) return;
+
+      let exactMatchDomIndex = -1;
+      let lastPastDomIndex = -1;
+
+      for (let i = 0; i < mainRows.length; i++) {
+        const tr = mainRows[i];
+        const horaSpan = tr.querySelector<HTMLSpanElement>(
+          "td:nth-child(6) .ft-hora-depart"
+        );
+        if (!horaSpan) continue;
+        const horaText = horaSpan.textContent?.trim() || "";
+        if (!horaText) continue;
+        const rowMin = toMinutes(horaText);
+        if (Number.isNaN(rowMin)) continue;
+
+        if (rowMin === effectiveMin && exactMatchDomIndex === -1) {
+          exactMatchDomIndex = i;
+        }
+        if (rowMin <= effectiveMin) {
+          lastPastDomIndex = i;
+        }
+      }
+
+      const domIndex =
+        exactMatchDomIndex !== -1
+          ? exactMatchDomIndex
+          : lastPastDomIndex !== -1
+          ? lastPastDomIndex
+          : 0;
+
+      const tr = mainRows[domIndex];
+      const dataIndexAttr = tr.getAttribute("data-ft-row");
+      const dataIndex = dataIndexAttr ? parseInt(dataIndexAttr, 10) : domIndex;
+      setActiveRowIndex(dataIndex);
+      // pour la TitleBar : on renvoie le décalage figé au moment du play
+      const fixed = base.fixedDelay ?? 0;
+      const text =
+        fixed === 0 ? "0 min" : fixed > 0 ? `+ ${fixed} min` : `- ${-fixed} min`;
+      window.dispatchEvent(
+        new CustomEvent("lim:schedule-delta", {
+          detail: {
+            text,
+            isLargeDelay: Math.abs(fixed) >= 5,
+          },
+        })
+      );
+
+    };
+
+    // premier calage immédiat
+    updateFromClock();
+
+    // recalcule chaque minute (heure réelle)
+    const timer = setInterval(() => {
+      updateFromClock();
+    }, 60_000);
+
+    const handleForceTime = (e: Event) => {
+      const ce = e as CustomEvent;
+      const time = ce?.detail?.time as string | undefined;
+      if (time) {
+        console.log("[FT] heure forcée =", time);
+        updateFromClock(time);
+      }
+    };
+    window.addEventListener("ft:force-time", handleForceTime as EventListener);
+
+    return () => {
+      clearInterval(timer);
+      window.removeEventListener(
+        "ft:force-time",
+        handleForceTime as EventListener
+      );
+    };
+  }, [autoScrollEnabled]);
+
+
+
+  // avance auto de la ligne active tant qu'on est en play
+
+
+
+  // (désactivé pour le moment : on veut d'abord caler sur l'heure réelle + retard)
+  useEffect(() => {
+    // rien pour l'instant
+  }, [autoScrollEnabled]);
+
+
   //
   // ===== 2. LOGIQUE MÉTIER DE SENS ===================================
   //
@@ -1228,6 +1503,40 @@ const bloqueo = (entry as any).bloqueo ?? "";
       renderedRowIndex++;
     }
 
+    // Trains PAIRS : si la ligne suivante est une noteOnly, on l'affiche AVANT la ligne principale
+    if (!isOdd && hasNoteAfter && i < rawEntries.length - 1) {
+      const vmaxClassForNote = csvZoneOpen ? " ft-v-csv-full" : "";
+
+      rows.push(
+        <tr className="ft-row-inter" key={`note-before-${i}`}>
+          {(() => {
+            renderedRowIndex++;
+            return <td className="ft-td"></td>;
+          })()}
+
+          <td className={"ft-td ft-v-cell" + vmaxClassForNote}>
+            <div className="ft-v-inner text-center"></div>
+          </td>
+
+          <td className="ft-td" />
+
+          <td className="ft-td">
+            {renderDependenciaCell(nextEntry as FTEntry)}
+          </td>
+
+          <td className="ft-td" />
+          <td className="ft-td" />
+          <td className="ft-td" />
+          <td className="ft-td" />
+          <td className="ft-td" />
+          <td className="ft-td ft-rc-cell" />
+          <td className="ft-td ft-td-nivel" />
+        </tr>
+      );
+      // on ne fait PAS i++ ici, on laisse la boucle gérer la ligne suivante
+    }
+
+
     // 2) LIGNE PRINCIPALE (toujours)
 
 rows.push(
@@ -1278,8 +1587,13 @@ rows.push(
             "ft-td" + (shouldHighlightRow ? " ft-highlight-cell" : "")
           }
         >
-          {sitKm}
+          {autoScrollEnabled && i === activeRowIndex
+            ? `> ${sitKm}`
+            : sitKm}
         </td>
+
+
+
 
         {/* Dependencia (surlignable) */}
         <td
@@ -1405,14 +1719,17 @@ rows.push(
     }
 
     // 4) LIGNE INTERMÉDIAIRE POUR LES REMARQUES ROUGES (noteOnly) SOUS la ligne principale
-    if (hasNoteAfter && i < rawEntries.length - 1) {
+    // ➜ désormais seulement pour les trains IMPAIR (isOdd === true)
+    if (isOdd && hasNoteAfter && i < rawEntries.length - 1) {
       // Si on est dans une zone CSV, la ligne de note est aussi "dans la zone" => full
       const vmaxClassForNote = csvZoneOpen ? " ft-v-csv-full" : "";
 
-rows.push(
-  <tr className="ft-row-inter" key={`note-${i}`}>
-    {(() => { renderedRowIndex++; return <td className="ft-td"></td>; })()}
-
+      rows.push(
+        <tr className="ft-row-inter" key={`note-${i}`}>
+          {(() => {
+            renderedRowIndex++;
+            return <td className="ft-td"></td>;
+          })()}
 
           <td className={"ft-td ft-v-cell" + vmaxClassForNote}>
             <div className="ft-v-inner text-center"></div>
@@ -1434,8 +1751,10 @@ rows.push(
         </tr>
       );
 
+      // on consomme la ligne noteOnly
       i++;
     }
+
   }
 
   //
@@ -1474,6 +1793,7 @@ rows.push(
           overflow-y: auto;
           -webkit-overflow-scrolling: touch;
         }
+
 
         .ft-table {
           border-collapse: separate;
@@ -1902,6 +2222,18 @@ rows.push(
           color: #fff;
         }
 
+                .ft-active-line {
+          position: absolute;
+          left: 0;
+          right: 0;
+          top: 40%;
+          height: 2px;
+          background: red;
+          pointer-events: none;
+          z-index: 6;
+        }
+
+
       `}</style>
 
       <div
@@ -1937,7 +2269,11 @@ rows.push(
             <table className="ft-table">
               <tbody>{rows}</tbody>
             </table>
+
+            {/* overlay de repère à 1/3 de la hauteur visible */}
+            <div className="ft-active-line"></div>
           </div>
+
         </FTScrolling>
 
 
