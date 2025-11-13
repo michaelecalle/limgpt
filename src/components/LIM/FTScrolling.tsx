@@ -4,9 +4,11 @@ import React, { useState, useEffect, useRef } from "react";
 interface FTScrollingProps {
   children: React.ReactNode;
   onScroll?: (e: React.UIEvent<HTMLDivElement>) => void; // <- on autorise le parent à écouter le scroll
+  onContainerRef?: (el: HTMLDivElement | null) => void;  // <- nouveau : le parent peut récupérer le conteneur scrollable
 }
 
-const FTScrolling: React.FC<FTScrollingProps> = ({ children, onScroll }) => {
+
+const FTScrolling: React.FC<FTScrollingProps> = ({ children, onScroll, onContainerRef }) => {
   const [maxHeight, setMaxHeight] = useState(0);
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -27,13 +29,19 @@ const FTScrolling: React.FC<FTScrollingProps> = ({ children, onScroll }) => {
 
   return (
     <div
-      ref={containerRef}
+      ref={(el) => {
+        containerRef.current = el;
+        if (onContainerRef) {
+          onContainerRef(el);
+        }
+      }}
       style={{ maxHeight: maxHeight, overflowY: "auto" }}
       onScroll={onScroll} // <- c’est CE conteneur qui scroll
     >
       {children}
     </div>
   );
+
 };
 
 

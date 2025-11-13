@@ -29,11 +29,11 @@ export default function TitleBar() {
   const [autoScroll, setAutoScroll] = useState(false)
   const [gpsState, setGpsState] = useState<0 | 1 | 2>(0)
   const [hourlyMode, setHourlyMode] = useState(false)
+  const [standbyMode, setStandbyMode] = useState(false)
   const [pdfMode, setPdfMode] = useState<'blue' | 'green' | 'red'>('blue')
   // avance/retard affiché à côté de l'heure (ex: "+3 min" ou "-1 min")
   const [scheduleDelta, setScheduleDelta] = useState<string | null>(null)
-    const [scheduleDeltaIsLarge, setScheduleDeltaIsLarge] = useState(false)
-
+  const [scheduleDeltaIsLarge, setScheduleDeltaIsLarge] = useState(false)
 
 
   // ➜ vidéo de réveil
@@ -205,13 +205,19 @@ export default function TitleBar() {
     }
   }, [])
 
-
-    // écoute le mode horaire envoyé par FT
+  // écoute le mode horaire envoyé par FT
   useEffect(() => {
     const handler = (e: Event) => {
       const ce = e as CustomEvent
       const enabled = !!ce?.detail?.enabled
-      setHourlyMode(enabled)
+      const standby = !!ce?.detail?.standby
+
+      // hourlyMode = "mode horaire actif" (lecture sur la FT)
+      // - autoScroll = true  => lecture en cours (vert)
+      // - autoScroll = false & hourlyMode = true => standby (orange)
+      // - autoScroll = false & hourlyMode = false => mode horaire OFF (rouge)
+      setHourlyMode(enabled || standby)
+      setStandbyMode(standby)
     }
 
     window.addEventListener('lim:hourly-mode', handler as EventListener)
@@ -221,9 +227,37 @@ export default function TitleBar() {
   }, [])
 
 
+  // synchronise le bouton Play/Pause + état horaire/standby si FT change le mode auto-scroll
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const ce = e as CustomEvent
+      const detail = (ce.detail || {}) as any
+      const enabled = !!detail.enabled
+      const standby = !!detail.standby
+
+      // 1) on met à jour l'état du bouton Play/Pause
+      setAutoScroll(enabled)
+
+      // 2) si FT fournit un "standby" explicite (cas Standby auto),
+      //    on aligne aussi hourlyMode / standbyMode pour la TitleBar
+      if ('standby' in detail) {
+        setHourlyMode(enabled || standby)
+        setStandbyMode(standby)
+      }
+    }
+
+    window.addEventListener('ft:auto-scroll-change', handler as EventListener)
+    return () => {
+      window.removeEventListener('ft:auto-scroll-change', handler as EventListener)
+    }
+  }, [])
+
+
   const titleSuffix = trainDisplay ? ` ${trainDisplay}` : ''
 
   const IconSun = () => (
+
+
     <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" className="opacity-80">
       <circle cx="12" cy="12" r="4" />
       <g strokeWidth="1.5" stroke="currentColor" fill="none">
@@ -271,10 +305,7 @@ export default function TitleBar() {
             </span>
           )}
 
-
-
           {pdfMode === 'green' && (
-
             <>
               {/* Auto-scroll */}
               <button
@@ -283,16 +314,21 @@ export default function TitleBar() {
                   const next = !autoScroll
                   setAutoScroll(next)
                   window.dispatchEvent(
-                    new CustomEvent('ft:auto-scroll-change', { detail: { enabled: next } })
+                    new CustomEvent('ft:auto-scroll-change', {
+                      detail: { enabled: next, source: 'titlebar' },
+                    })
                   )
                 }}
                 className={`h-7 w-7 rounded-full flex items-center justify-center text-[11px] transition
                   ${
-                    autoScroll
-                      ? 'bg-emerald-500 text-white'
-                      : 'bg-zinc-200/70 text-zinc-800 dark:bg-zinc-700/70 dark:text-zinc-100'
+                    standbyMode
+                      ? 'bg-orange-400 text-white dark:bg-orange-500'
+                      : autoScroll
+                        ? 'bg-emerald-500 text-white'
+                        : 'bg-zinc-200/70 text-zinc-800 dark:bg-zinc-700/70 dark:text-zinc-100'
                   }
                 `}
+
                 title={
                   autoScroll
                     ? 'Désactiver le défilement automatique'
@@ -312,6 +348,7 @@ export default function TitleBar() {
               </button>
 
               {/* GPS */}
+
               <button
                 type="button"
                 onClick={() => {
@@ -341,9 +378,11 @@ export default function TitleBar() {
                 type="button"
                 className={`h-7 w-7 rounded-full flex items-center justify-center text-[12px] bg-white dark:bg-zinc-900 transition cursor-default
                   ${
-                    hourlyMode
-                      ? 'border-[3px] border-emerald-400 text-emerald-500 dark:text-emerald-300'
-                      : 'border-[3px] border-red-500 text-red-500 dark:text-red-400'
+                    standbyMode
+                      ? 'border-[3px] border-orange-400 text-orange-500 dark:text-orange-300'
+                      : autoScroll
+                        ? 'border-[3px] border-emerald-400 text-emerald-500 dark:text-emerald-300'
+                        : 'border-[3px] border-red-500 text-red-500 dark:text-red-400'
                   }
                 `}
                 aria-pressed={hourlyMode}

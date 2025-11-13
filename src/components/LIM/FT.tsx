@@ -14,65 +14,111 @@ type FTProps = {
 };
 
 export default function FT({ variant = "classic" }: FTProps) {
-    const [visibleRows, setVisibleRows] = React.useState<{ first: number; last: number }>({
+  const [visibleRows, setVisibleRows] = React.useState<{ first: number; last: number }>({
     first: 0,
     last: 0,
   });
-    // ligne "active" quand on est en mode horaire (play)
+  // ligne "active" quand on est en mode horaire (play)
   const [activeRowIndex, setActiveRowIndex] = useState<number>(0);
 
- const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
+  // ligne actuellement sélectionnée pour le recalage manuel
+  const [selectedRowIndex, setSelectedRowIndex] = useState<number | null>(null);
+
+  const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
   const el = e.currentTarget;
+  scrollContainerRef.current = el;
 
   const scrollTop = el.scrollTop;
-  const clientHeight = el.clientHeight;
 
-  // 1) on récupère les lignes principales
-  const rowEls = el.querySelectorAll<HTMLTableRowElement>("tr.ft-row-main");
-  if (!rowEls.length) return;
+    const clientHeight = el.clientHeight;
 
-  // 2) première ligne dont le bas est sous le haut du viewport
-  let firstVisible = 0;
-  for (let i = 0; i < rowEls.length; i++) {
-    const r = rowEls[i];
-    const top = r.offsetTop;
-    const bottom = top + r.offsetHeight;
-    if (bottom >= scrollTop) {
-      firstVisible = i;
-      break;
-    }
-  }
+    // --- Gestion scroll manuel vs scroll automatique ---
+    if (autoScrollEnabled) {
+      if (isProgrammaticScrollRef.current) {
+        // Scroll provoqué par notre code (auto-scroll) → on ne déclenche pas le mode manuel
+        isProgrammaticScrollRef.current = false;
+        // On met à jour la position "officielle" de l'auto-scroll
+        lastAutoScrollTopRef.current = scrollTop;
+      } else {
+        // Scroll manuel utilisateur pendant que le mode horaire est actif
+        isManualScrollRef.current = true;
 
-  // 3) dernière ligne dont le haut est encore dans le viewport
-  const viewportBottom = scrollTop + clientHeight;
-  let lastVisible = firstVisible;
-  for (let i = firstVisible; i < rowEls.length; i++) {
-    const r = rowEls[i];
-    const top = r.offsetTop;
-    if (top <= viewportBottom) {
-      lastVisible = i;
+        // On relance un timer de 5s à chaque nouveau mouvement manuel
+        if (manualScrollTimeoutRef.current !== null) {
+          window.clearTimeout(manualScrollTimeoutRef.current);
+        }
+
+        manualScrollTimeoutRef.current = window.setTimeout(() => {
+          manualScrollTimeoutRef.current = null;
+          isManualScrollRef.current = false;
+
+          const container = scrollContainerRef.current;
+          if (!container) return;
+          if (!autoScrollEnabledRef.current) return;
+
+          const target = lastAutoScrollTopRef.current;
+          if (target == null) return;
+
+          // On revient à la position auto d'avant le scroll manuel
+          isProgrammaticScrollRef.current = true;
+          container.scrollTo({
+            top: target,
+            behavior: "auto",
+          });
+        }, 5000);
+      }
     } else {
-      break;
+      // Mode horaire coupé → on désactive toute logique de retour auto
+      isManualScrollRef.current = false;
+      if (manualScrollTimeoutRef.current !== null) {
+        window.clearTimeout(manualScrollTimeoutRef.current);
+        manualScrollTimeoutRef.current = null;
+      }
     }
-  }
 
-  console.log(
-    "[FT][scroll] scrollTop=",
-    scrollTop,
-    " / clientHeight=",
-    clientHeight,
-    " / rows=",
-    rowEls.length
-  );
-  console.log("[FT][visible-rows] first=", firstVisible, "last=", lastVisible);
+    // 1) on récupère les lignes principales
+    const rowEls = el.querySelectorAll<HTMLTableRowElement>("tr.ft-row-main");
+    if (!rowEls.length) return;
 
-  // on met à jour le state
-  setVisibleRows({ first: firstVisible, last: lastVisible });
-};
+    // 2) première ligne dont le bas est sous le haut du viewport
+    let firstVisible = 0;
+    for (let i = 0; i < rowEls.length; i++) {
+      const r = rowEls[i];
+      const top = r.offsetTop;
+      const bottom = top + r.offsetHeight;
+      if (bottom >= scrollTop) {
+        firstVisible = i;
+        break;
+      }
+    }
 
+    // 3) dernière ligne dont le haut est encore dans le viewport
+    const viewportBottom = scrollTop + clientHeight;
+    let lastVisible = firstVisible;
+    for (let i = firstVisible; i < rowEls.length; i++) {
+      const r = rowEls[i];
+      const top = r.offsetTop;
+      if (top <= viewportBottom) {
+        lastVisible = i;
+      } else {
+        break;
+      }
+    }
 
+    console.log(
+      "[FT][scroll] scrollTop=",
+      scrollTop,
+      " / clientHeight=",
+      clientHeight,
+      " / rows=",
+      rowEls.length
+    );
+    console.log("[FT][visible-rows] first=", firstVisible, "last=", lastVisible);
 
-  
+    // on met à jour le state
+    setVisibleRows({ first: firstVisible, last: lastVisible });
+  };
+
   //
   // ===== 1. NUMÉRO DE TRAIN ET PORTION DE PARCOURS ===================
   //
@@ -97,8 +143,8 @@ export default function FT({ variant = "classic" }: FTProps) {
 
   // 🔁 Valeurs CONC résolues par heure (via ft:conc:resolved)
   const [concParHeure, setConcParHeure] = useState<Record<string, string[]>>({});
-const rcPrintedSegmentsRef = React.useRef<Set<number>>(new Set());
-const vPrintedSegmentsRef = React.useRef<Set<number>>(new Set());
+  const rcPrintedSegmentsRef = React.useRef<Set<number>>(new Set());
+  const vPrintedSegmentsRef = React.useRef<Set<number>>(new Set());
 
   // -- écoute du numéro de train
   useEffect(() => {
@@ -300,40 +346,110 @@ const vPrintedSegmentsRef = React.useRef<Set<number>>(new Set());
 
   // -- écoute du bouton play/pause (auto-scroll) venant du TitleBar
   const [autoScrollEnabled, setAutoScrollEnabled] = useState(false);
-  const autoScrollBaseRef = React.useRef<{ realMin: number; firstHoraMin: number; fixedDelay: number } | null>(null);
+  const autoScrollEnabledRef = React.useRef(false);
 
+  useEffect(() => {
+    autoScrollEnabledRef.current = autoScrollEnabled;
+  }, [autoScrollEnabled]);
+
+  const autoScrollBaseRef =
+    React.useRef<{ realMin: number; firstHoraMin: number; fixedDelay: number } | null>(null);
+  // Ligne cible pour un recalage manuel (mode Standby)
+  const recalibrateFromRowRef = React.useRef<number | null>(null);
+  // Premier démarrage déjà “consommé” ?
+  const initialStandbyDoneRef = React.useRef(false);
+  // Index de la première ligne principale non-noteOnly (tenu à jour plus bas)
+  const firstNonNoteIndexRef = React.useRef<number | null>(null);
+
+  // Référence vers le conteneur scrollable de FTScrolling
+  const scrollContainerRef = React.useRef<HTMLDivElement | null>(null);
+
+  // Suivi du scroll manuel pendant que le mode horaire est actif
+  const isManualScrollRef = React.useRef(false);
+  const manualScrollTimeoutRef = React.useRef<number | null>(null);
+  const lastAutoScrollTopRef = React.useRef<number | null>(null);
+  const isProgrammaticScrollRef = React.useRef(false);
 
   useEffect(() => {
     function handlerAutoScroll(e: any) {
-      const enabled = !!e?.detail?.enabled;
-      console.log("[FT] ft:auto-scroll-change reçu, enabled =", enabled);
+      const detail = e?.detail ?? {};
+      const enabled = !!detail.enabled;
+      const standby = !!detail.standby;
+
+      // 🎯 Cas spécial : 1er clic sur Play -> Standby initial + sélection 1ʳᵉ ligne
+      if (enabled && !initialStandbyDoneRef.current) {
+        const idx = firstNonNoteIndexRef.current;
+        if (typeof idx === "number" && idx >= 0) {
+          initialStandbyDoneRef.current = true;
+
+          console.log(
+            "[FT] Premier Play reçu, passage en Standby initial sur la ligne",
+            idx
+          );
+
+          // Sélection visuelle (cadre rouge)
+          setSelectedRowIndex(idx);
+          // Base de recalage pour le futur démarrage réel
+          recalibrateFromRowRef.current = idx;
+
+          // On NE démarre PAS l'auto-scroll : autoScrollEnabled reste false
+          setAutoScrollEnabled(false);
+
+          // On signale à la TitleBar qu'on est en mode horaire Standby (🕑 orange)
+          window.dispatchEvent(
+            new CustomEvent("lim:hourly-mode", {
+              detail: { enabled: false, standby: true },
+            })
+          );
+
+          return;
+        }
+      }
+
+      console.log(
+        "[FT] ft:auto-scroll-change reçu, enabled =",
+        enabled,
+        "/ standby =",
+        standby
+      );
+
       setAutoScrollEnabled(enabled);
 
-      // on prévient la TitleBar pour qu'elle mette l'icône 🕑 en vert/rouge
+      // On informe la TitleBar de l'état horaire / standby
       window.dispatchEvent(
         new CustomEvent("lim:hourly-mode", {
-          detail: { enabled },
+          detail: { enabled, standby },
         })
       );
     }
 
-    window.addEventListener("ft:auto-scroll-change", handlerAutoScroll as EventListener);
+    window.addEventListener(
+      "ft:auto-scroll-change",
+      handlerAutoScroll as EventListener
+    );
 
     return () => {
-      window.removeEventListener("ft:auto-scroll-change", handlerAutoScroll as EventListener);
+      window.removeEventListener(
+        "ft:auto-scroll-change",
+        handlerAutoScroll as EventListener
+      );
     };
   }, []);
-
 
   // quand le mode auto-scroll (play) s'allume/s'éteint
   useEffect(() => {
     if (!autoScrollEnabled) {
-      // on nettoie l'affichage dans la titlebar
-      window.dispatchEvent(
-        new CustomEvent("lim:schedule-delta", { detail: { text: "" } })
-      );
-      // on oublie la base
+      // on NE TOUCHE PLUS au delta horaire :
+      // - on garde la dernière valeur affichée dans la TitleBar
+      // - la base interne est simplement réinitialisée
       autoScrollBaseRef.current = null;
+
+      // On désactive tout éventuel scroll manuel en cours
+      isManualScrollRef.current = false;
+      if (manualScrollTimeoutRef.current !== null) {
+        window.clearTimeout(manualScrollTimeoutRef.current);
+        manualScrollTimeoutRef.current = null;
+      }
       return;
     }
 
@@ -353,8 +469,8 @@ const vPrintedSegmentsRef = React.useRef<Set<number>>(new Set());
       return `${hh}:${mm}`;
     };
 
-    // on capture le point de départ (heure réelle + toute première heure FT dispo)
-    const captureBase = () => {
+    // Base "classique" : à partir de la première heure FT dispo
+    const captureBaseFromFirstRow = () => {
       const now = new Date();
       const nowMin = now.getHours() * 60 + now.getMinutes();
 
@@ -387,11 +503,56 @@ const vPrintedSegmentsRef = React.useRef<Set<number>>(new Set());
       return { realMin: nowMin, firstHoraMin, fixedDelay };
     };
 
+    // Base "mode Standby" : à partir de la ligne sélectionnée
+    const captureBaseFromRowIndex = (rowIndex: number) => {
+      const now = new Date();
+      const nowMin = now.getHours() * 60 + now.getMinutes();
 
-    // on crée la base
-    autoScrollBaseRef.current = captureBase();
+      const mainRows = document.querySelectorAll<HTMLTableRowElement>(
+        "table.ft-table tbody tr.ft-row-main"
+      );
+      if (!mainRows.length) return null;
 
-        if (autoScrollBaseRef.current) {
+      let targetRow: HTMLTableRowElement | null = null;
+      for (let i = 0; i < mainRows.length; i++) {
+        const tr = mainRows[i];
+        const attr = tr.getAttribute("data-ft-row");
+        const idx = attr ? parseInt(attr, 10) : i;
+        if (idx === rowIndex) {
+          targetRow = tr;
+          break;
+        }
+      }
+      if (!targetRow) return null;
+
+      const horaSpan = targetRow.querySelector<HTMLSpanElement>(
+        "td:nth-child(6) .ft-hora-depart"
+      );
+      const horaText = horaSpan?.textContent?.trim() || "";
+      if (!horaText) return null;
+
+      const rowMin = toMinutes(horaText);
+      if (Number.isNaN(rowMin)) return null;
+
+      const fixedDelay = nowMin - rowMin;
+      return { realMin: nowMin, firstHoraMin: rowMin, fixedDelay };
+    };
+
+    // ✅ Choix de la base : soit ligne sélectionnée (Standby), soit première ligne
+    const forcedIndex = recalibrateFromRowRef.current;
+    if (forcedIndex != null) {
+      autoScrollBaseRef.current = captureBaseFromRowIndex(forcedIndex);
+      recalibrateFromRowRef.current = null;
+    } else {
+      autoScrollBaseRef.current = captureBaseFromFirstRow();
+    }
+
+    // On mémorise la position de scroll actuelle comme "base"
+    if (scrollContainerRef.current) {
+      lastAutoScrollTopRef.current = scrollContainerRef.current.scrollTop;
+    }
+
+    if (autoScrollBaseRef.current) {
       const fixed = autoScrollBaseRef.current.fixedDelay;
       const text =
         fixed === 0 ? "0 min" : fixed > 0 ? `+ ${fixed} min` : `- ${-fixed} min`;
@@ -404,7 +565,6 @@ const vPrintedSegmentsRef = React.useRef<Set<number>>(new Set());
         })
       );
     }
-
 
     const updateFromClock = (forcedHHMM?: string) => {
       // si heure forcée (console), on garde l'ancien comportement
@@ -527,7 +687,6 @@ const vPrintedSegmentsRef = React.useRef<Set<number>>(new Set());
           },
         })
       );
-
     };
 
     // premier calage immédiat
@@ -557,21 +716,70 @@ const vPrintedSegmentsRef = React.useRef<Set<number>>(new Set());
     };
   }, [autoScrollEnabled]);
 
-
-
-  // avance auto de la ligne active tant qu'on est en play
-
-
-
-  // (désactivé pour le moment : on veut d'abord caler sur l'heure réelle + retard)
+  // avance auto de la ligne active tant qu'on est en play :
+  // on ajuste le scroll pour rapprocher la ligne active de la ligne rouge
+  // (on autorise désormais le scroll à monter OU descendre).
   useEffect(() => {
-    // rien pour l'instant
-  }, [autoScrollEnabled]);
+    if (!autoScrollEnabled) return;
+    if (activeRowIndex == null) return;
+
+    const container = scrollContainerRef.current;
+    if (!container) return;
+
+    const activeRow = document.querySelector<HTMLTableRowElement>(
+      `tr.ft-row-main[data-ft-row="${activeRowIndex}"]`
+    );
+    const refLine = document.querySelector<HTMLDivElement>(".ft-active-line");
+
+    if (!activeRow || !refLine) return;
+
+    const containerRect = container.getBoundingClientRect();
+    const rowRect = activeRow.getBoundingClientRect();
+    const refRect = refLine.getBoundingClientRect();
+
+    // Centre vertical de la ligne active (en coordonnées écran)
+    const rowCenterY = rowRect.top + rowRect.height / 2;
+    // Position verticale de la ligne rouge (milieu)
+    const refCenterY = refRect.top + refRect.height / 2;
+
+    // delta > 0 : la ligne est sous la ligne rouge → on monte le tableau
+    // delta < 0 : la ligne est au-dessus de la ligne rouge → on descend le tableau
+    const delta = rowCenterY - refCenterY;
+
+    // Si la ligne est déjà parfaitement alignée, on ne fait rien
+    if (delta === 0) return;
+
+    // Si l'utilisateur est en train de scroller manuellement, on ne touche pas au scroll
+    if (isManualScrollRef.current) {
+      return;
+    }
+
+    const currentScrollTop = container.scrollTop;
+    let targetScrollTop = currentScrollTop + delta;
+
+    // On borne proprement dans [0 ; maxScrollTop]
+    const maxScrollTop = container.scrollHeight - container.clientHeight;
+    if (maxScrollTop < 0) return;
+
+    if (targetScrollTop < 0) targetScrollTop = 0;
+    if (targetScrollTop > maxScrollTop) targetScrollTop = maxScrollTop;
+
+    // Si après bornage la valeur n'a pas changé, inutile de scroller
+    if (targetScrollTop === currentScrollTop) return;
+
+    isProgrammaticScrollRef.current = true;
+    container.scrollTo({
+      top: targetScrollTop,
+      behavior: "auto",
+    });
+    lastAutoScrollTopRef.current = targetScrollTop;
+  }, [autoScrollEnabled, activeRowIndex]);
 
 
   //
   // ===== 2. LOGIQUE MÉTIER DE SENS ===================================
   //
+
   const isOdd = useMemo(() => {
     if (trainNumber === null) return null;
     return trainNumber % 2 !== 0;
@@ -717,13 +925,13 @@ const vPrintedSegmentsRef = React.useRef<Set<number>>(new Set());
     });
 
     // Vérification si la destination est "Barcelona Sants"
-if (routeEnd === "Barcelona Sants") {
-  // Vérifier si la dernière ligne est bien 621.0
-  const lastLineIs621_0 = lastEntry.pk === "621.0";
-  
-  // Affichage dans la console pour le débogage
-  console.log(`Dernière ligne détectée, 621.0 : ${lastLineIs621_0 ? "Oui" : "Non"}`);
-}
+    if (routeEnd === "Barcelona Sants") {
+      // Vérifier si la dernière ligne est bien 621.0
+      const lastLineIs621_0 = (lastEntry as any).pk === "621.0";
+
+      // Affichage dans la console pour le débogage
+      console.log(`Dernière ligne détectée, 621.0 : ${lastLineIs621_0 ? "Oui" : "Non"}`);
+    }
 
     console.log(
       "[FT] Aperçu (5 premières lignes après tronquage):",
@@ -985,30 +1193,63 @@ if (routeEnd === "Barcelona Sants") {
     csvHighlightByIndex[i] = "none";
   }
 
+  for (let i = 0; i < rawEntries.length; i++) {
+    const e = rawEntries[i];
+    if (!e.pk || e.isNoteOnly) continue;
 
+    const pkNum = Number(e.pk);
+    if (Number.isNaN(pkNum)) continue;
 
-for (let i = 0; i < rawEntries.length; i++) {
-  const e = rawEntries[i];
-  if (!e.pk || e.isNoteOnly) continue;
-
-  const pkNum = Number(e.pk);
-  if (Number.isNaN(pkNum)) continue;
-
-
-  // Ici, ajoute ta logique pour les autres zones CSV comme avant
-  // ...
-}
+    // Ici, ajoute ta logique pour les autres zones CSV comme avant
+    // ...
+  }
 
   if (currentCsvSens) {
     // On traite chaque zone CSV correspondant au sens courant
-  for (const zone of CSV_ZONES) {
-    if (zone.sens !== currentCsvSens) continue;
+    for (const zone of CSV_ZONES) {
+      if (zone.sens !== currentCsvSens) continue;
 
-    const a = Math.min(zone.pkFrom, zone.pkTo);
-    const b = Math.max(zone.pkFrom, zone.pkTo);
+      const a = Math.min(zone.pkFrom, zone.pkTo);
+      const b = Math.max(zone.pkFrom, zone.pkTo);
 
-    const indicesDansZone: number[] = [];
+      const indicesDansZone: number[] = [];
 
+      for (let i = 0; i < rawEntries.length; i++) {
+        const e = rawEntries[i];
+        if (!e.pk || e.isNoteOnly) continue;
+
+        const pkNum = Number(e.pk);
+        if (Number.isNaN(pkNum)) continue;
+
+        if (pkNum >= a && pkNum <= b) {
+          indicesDansZone.push(i);
+        }
+      }
+
+      if (indicesDansZone.length === 0) continue;
+
+      const first = indicesDansZone[0];
+      const last = indicesDansZone[indicesDansZone.length - 1];
+
+      // Nouvelle logique : vérifier si la première zone affichée
+      const isFirstZone = first === 0; // Vérification si c'est la première ligne affichée
+
+      for (const idx of indicesDansZone) {
+        if (isFirstZone) {
+          // Ne pas surligner la première zone
+          csvHighlightByIndex[idx] = "none";
+        } else if (first === last) {
+          csvHighlightByIndex[idx] = "full";
+        } else if (idx === first) {
+          csvHighlightByIndex[idx] = "bottom";
+        } else if (idx === last) {
+          csvHighlightByIndex[idx] = "top";
+        } else {
+          csvHighlightByIndex[idx] = "full";
+        }
+      }
+    }
+    // Logique conditionnelle : si on est sur la ligne 621.0 et qu'elle est la dernière ligne affichée
     for (let i = 0; i < rawEntries.length; i++) {
       const e = rawEntries[i];
       if (!e.pk || e.isNoteOnly) continue;
@@ -1016,48 +1257,11 @@ for (let i = 0; i < rawEntries.length; i++) {
       const pkNum = Number(e.pk);
       if (Number.isNaN(pkNum)) continue;
 
-      if (pkNum >= a && pkNum <= b) {
-        indicesDansZone.push(i);
+      // Appliquer le surlignage complet à la ligne 621.0 si c'est la dernière ligne affichée
+      if (e.pk === "621.0" && i === rawEntries.length - 1) {
+        csvHighlightByIndex[i] = "full"; // Surbrillance complète pour la dernière ligne
       }
     }
-
-    if (indicesDansZone.length === 0) continue;
-
-    const first = indicesDansZone[0];
-    const last = indicesDansZone[indicesDansZone.length - 1];
-
-    // Nouvelle logique : vérifier si la première zone affichée
-    const isFirstZone = (first === 0); // Vérification si c'est la première ligne affichée
-
-    for (const idx of indicesDansZone) {
-      if (isFirstZone) {
-        // Ne pas surligner la première zone
-        csvHighlightByIndex[idx] = "none";
-      } else if (first === last) {
-        csvHighlightByIndex[idx] = "full";
-      } else if (idx === first) {
-        csvHighlightByIndex[idx] = "bottom";
-      } else if (idx === last) {
-        csvHighlightByIndex[idx] = "top";
-      } else {
-        csvHighlightByIndex[idx] = "full";
-      }
-    }
-  }
-// Logique conditionnelle : si on est sur la ligne 621.0 et qu'elle est la dernière ligne affichée
-for (let i = 0; i < rawEntries.length; i++) {
-  const e = rawEntries[i];
-  if (!e.pk || e.isNoteOnly) continue;
-
-  const pkNum = Number(e.pk);
-  if (Number.isNaN(pkNum)) continue;
-
-  // Appliquer le surlignage complet à la ligne 621.0 si c'est la dernière ligne affichée
-  if (e.pk === "621.0" && i === rawEntries.length - 1) {
-    csvHighlightByIndex[i] = "full";  // Surbrillance complète pour la dernière ligne
-  }
-}
-
 
     // 🔁 Post-traitement : remplir les cases ENTRE les barres
     // On cherche chaque paire "bottom" -> "top" et on met "full"
@@ -1108,6 +1312,10 @@ for (let i = 0; i < rawEntries.length; i++) {
     return -1;
   })();
 
+  useEffect(() => {
+    firstNonNoteIndexRef.current = firstNonNoteIndex;
+  }, [firstNonNoteIndex]);
+
   const lastNonNoteIndex = (() => {
     for (let i = rawEntries.length - 1; i >= 0; i--) {
       if (!rawEntries[i].isNoteOnly) return i;
@@ -1152,13 +1360,108 @@ for (let i = 0; i < rawEntries.length; i++) {
   // radio : on veut l'afficher une seule fois dans le viewport
   let radioPrintedInThisRender = false;
   // bloqueo : on veut l'afficher une seule fois dans le viewport
-let bloqueoPrintedInThisRender = false;
+  let bloqueoPrintedInThisRender = false;
 
+  // Gestion des clics sur le corps de la FT :
+  // - 1er clic en mode horaire : sélection de la ligne la plus proche => Standby
+  // - 2ᵉ clic en Standby : relance du mode horaire depuis la ligne sélectionnée
+  const handleBodyClick = (e: React.MouseEvent<HTMLDivElement>) => {
+    const container = e.currentTarget;
+    const clickY = e.clientY;
+
+    const isStandby =
+      !autoScrollEnabled &&
+      recalibrateFromRowRef.current !== null &&
+      selectedRowIndex !== null;
+
+    // 2ᵉ clic : on est en Standby -> on relance le mode horaire
+    if (isStandby) {
+      // on enlève la sélection visuelle (stop clignotement)
+      setSelectedRowIndex(null);
+
+      // on relance le mode horaire
+      window.dispatchEvent(
+        new CustomEvent("ft:auto-scroll-change", {
+          detail: { enabled: true },
+        })
+      );
+      return;
+    }
+
+    // Si on n'est pas en auto-scroll (avant Play ou en pause "normale"),
+    // on ne déclenche pas le Standby / la sélection.
+    if (!autoScrollEnabled) {
+      return;
+    }
+
+    const mainRows =
+      container.querySelectorAll<HTMLTableRowElement>("tr.ft-row-main");
+    if (!mainRows.length) return;
+
+    let bestRow: HTMLTableRowElement | null = null;
+    let bestIndex = -1;
+    let bestDist = Number.POSITIVE_INFINITY;
+
+    for (let idx = 0; idx < mainRows.length; idx++) {
+      const tr = mainRows[idx];
+
+      // On ne considère que les lignes "calibrables" : horaire + dependencia présents
+      const horaSpan = tr.querySelector<HTMLSpanElement>(
+        "td:nth-child(6) .ft-hora-depart"
+      );
+      const horaText = horaSpan?.textContent?.trim() || "";
+
+      const depCell =
+        tr.querySelector<HTMLDivElement>(".ft-dependencia-cell");
+      const depText = depCell?.textContent?.trim() || "";
+
+      const hasHoraAndDep = !!horaText && !!depText;
+      if (!hasHoraAndDep) {
+        continue;
+      }
+
+      const rect = tr.getBoundingClientRect();
+      const centerY = rect.top + rect.height / 2;
+      const dist = Math.abs(clickY - centerY);
+      if (dist < bestDist) {
+        bestDist = dist;
+        bestRow = tr;
+        bestIndex = idx;
+      }
+    }
+
+    // Aucune ligne "valide" (avec horaire + dependencia) trouvée à proximité
+    if (!bestRow) {
+      return;
+    }
+
+    const dataIndexAttr = bestRow.getAttribute("data-ft-row");
+    const rowIndex = dataIndexAttr ? parseInt(dataIndexAttr, 10) : bestIndex;
+
+    // Visuel : ligne sélectionnée (cadre rouge clignotant)
+    setSelectedRowIndex(rowIndex);
+    // Fonctionnel : base de recalage horaire à partir de cette ligne
+    recalibrateFromRowRef.current = rowIndex;
+
+    // On coupe l'auto-scroll (équivalent d'un clic sur Pause)
+    window.dispatchEvent(
+      new CustomEvent("ft:auto-scroll-change", {
+        detail: { enabled: false },
+      })
+    );
+
+    // On signale le mode Standby à la TitleBar (🕑 orange)
+    window.dispatchEvent(
+      new CustomEvent("lim:hourly-mode", {
+        detail: { enabled: false, standby: true },
+      })
+    );
+  };
 
   for (let i = 0; i < rawEntries.length; i++) {
-
-
     const entry = rawEntries[i];
+
+    const isSelected = selectedRowIndex === i;
 
     if (entry.isNoteOnly) {
       continue;
@@ -1273,8 +1576,8 @@ let bloqueoPrintedInThisRender = false;
       }
     }
 
-const radio = entry.radio ?? "";
-const bloqueo = (entry as any).bloqueo ?? "";
+    const radio = entry.radio ?? "";
+    const bloqueo = (entry as any).bloqueo ?? "";
 
     // Arrêt : ligne principale avec COM ou TECN non vide
     const hasComOrTecnico =
@@ -1358,10 +1661,14 @@ const bloqueo = (entry as any).bloqueo ?? "";
         "[SCROLL INTELLIGENT VMAX]",
         "segment",
         segId,
-        "| ligne principale =", i,
-        "| visibleRows =", visibleRows.first, "→", visibleRows.last,
-        "| segmentVisible =", segIsVisible,
-        "| v =", currentSpeedText || "(aucune)"
+        "| ligne principale =",
+        i,
+        "| visibleRows =",
+        visibleRows.first, "→", visibleRows.last,
+        "| segmentVisible =",
+        segIsVisible,
+        "| v =",
+        currentSpeedText || "(aucune)"
       );
     }
 
@@ -1395,24 +1702,24 @@ const bloqueo = (entry as any).bloqueo ?? "";
       !vPrintedSegments.has(segId)
     ) {
       // zone visible actuelle (sur les lignes PRINCIPALES)
-      const visibleStart = visibleRows.first;
-      const visibleEnd = visibleRows.last;
+      const visibleStart2 = visibleRows.first;
+      const visibleEnd2 = visibleRows.last;
 
       // est-ce que la ligne-label de ce segment est visible ?
       const labelIsVisible =
         labelRowIndex !== null &&
-        labelRowIndex >= visibleStart &&
-        labelRowIndex <= visibleEnd;
+        labelRowIndex >= visibleStart2 &&
+        labelRowIndex <= visibleEnd2;
 
       // on ne réaffiche que si la ligne-label n'est plus visible
       if (!labelIsVisible) {
         // est-ce que cette ligne principale est dans le viewport ?
-        const segStillVisible = i >= visibleStart && i <= visibleEnd;
+        const segStillVisible = i >= visibleStart2 && i <= visibleEnd2;
 
         // comme pour RC : on évite de coller la valeur sur la première ligne visible
-        const targetVisible = visibleStart + 1;
+        const targetVisible2 = visibleStart2 + 1;
         const isGoodSpot =
-          mainRowCounter >= targetVisible && mainRowCounter <= visibleEnd;
+          mainRowCounter >= targetVisible2 && mainRowCounter <= visibleEnd2;
 
         if (segStillVisible && isGoodSpot) {
           speedSpacerContent = currentSpeedText;
@@ -1432,7 +1739,6 @@ const bloqueo = (entry as any).bloqueo ?? "";
       }
     }
 
-
     const showSpeedSpacer =
       speedSpacerContent && speedSpacerContent.trim() !== "";
     const showArrivalSpacer =
@@ -1451,8 +1757,6 @@ const bloqueo = (entry as any).bloqueo ?? "";
     } else if (highlightKind === "bottom") {
       vmaxHighlightClass = " ft-v-csv-bottom";
     }
-
-    
 
     // Debug CSV : vérifier le mapping index -> kind -> PK / dependencia
     const pkForLog = entry.pk ?? "";
@@ -1536,45 +1840,87 @@ const bloqueo = (entry as any).bloqueo ?? "";
       // on ne fait PAS i++ ici, on laisse la boucle gérer la ligne suivante
     }
 
-
     // 2) LIGNE PRINCIPALE (toujours)
+    rows.push(
+      <tr
+        className={
+          "ft-row-main" +
+          (isCurrentlyVisible ? " ft-row-visible" : "") +
+          (isSelected ? " ft-row-selected" : "")
+        }
+        key={`main-${i}`}
+        data-ft-row={i}
+        onClick={() => {
+          // on ne sélectionne que les lignes qui ont bien une dependencia et une heure
+          if (!hora || !depNorm) return;
 
-rows.push(
-  <tr
-    className={"ft-row-main" + (isCurrentlyVisible ? " ft-row-visible" : "")}
-    key={`main-${i}`}
-    data-ft-row={i}
-  >
-    {(() => {
-      renderedRowIndex++;
+          const isAlreadySelected = selectedRowIndex === i;
 
-      // 1) cas normal : la toute première vraie ligne est visible
-      const isFirstRow = i === firstNonNoteIndex;
-      const isFirstRowVisible =
-        i >= visibleRows.first && i <= visibleRows.last;
+          // 🟢 Cas 1 : on est à l'arrêt (autoScrollEnabled === false)
+          // ET on reclique sur LA MÊME ligne déjà sélectionnée => on relance le mode horaire
+          if (!autoScrollEnabled && isAlreadySelected) {
+            // on recale explicitement la base sur cette ligne
+            recalibrateFromRowRef.current = i;
 
-      if (isFirstRow && isFirstRowVisible) {
-        bloqueoPrintedInThisRender = true;
-        return <td className="ft-td">{bloqueo}</td>;
-      }
+            // équivalent d’un clic sur Play : on (re)met ft:auto-scroll à true
+            window.dispatchEvent(
+              new CustomEvent("ft:auto-scroll-change", {
+                detail: { enabled: true },
+              })
+            );
 
-      // 2) sinon, on le repose sur la 2e ligne principale visible
-      const visibleStart = visibleRows.first;
-      const visibleEnd = visibleRows.last;
-      const targetVisible = visibleStart + 1; // même logique que Radio / VMax
-      const isGoodSpot =
-        mainRowCounter >= targetVisible && mainRowCounter <= visibleEnd;
+            return;
+          }
 
-      if (!bloqueoPrintedInThisRender && isGoodSpot) {
-        bloqueoPrintedInThisRender = true;
-        return <td className="ft-td">{bloqueo}</td>;
-      }
+          // 🟠 Cas 2 : première sélection de la ligne (ou changement de ligne)
+          // -> sélection visuelle + préparation du recalage manuel
+          setSelectedRowIndex(i);
+          recalibrateFromRowRef.current = i;
 
-      // 3) sinon, rien
-      return <td className="ft-td"></td>;
-    })()}
+          // 🔴 Si le mode horaire était en cours, on le coupe et on bascule en standby (icône 🕑 orange)
+          if (autoScrollEnabled) {
+            window.dispatchEvent(
+              new CustomEvent("ft:auto-scroll-change", {
+                detail: { enabled: false },
+              })
+            );
 
+            window.dispatchEvent(
+              new CustomEvent("lim:hourly-mode", {
+                detail: { enabled: false, standby: true },
+              })
+            );
+          }
+        }}
+      >
+        {(() => {
+          renderedRowIndex++;
 
+          // 1) cas normal : la toute première vraie ligne est visible
+          const isFirstRow = i === firstNonNoteIndex;
+          const isFirstRowVisible =
+            i >= visibleRows.first && i <= visibleRows.last;
+
+          if (isFirstRow && isFirstRowVisible) {
+            bloqueoPrintedInThisRender = true;
+            return <td className="ft-td">{bloqueo}</td>;
+          }
+
+          // 2) sinon, on le repose sur la 2e ligne principale visible
+          const visibleStart3 = visibleRows.first;
+          const visibleEnd3 = visibleRows.last;
+          const targetVisible3 = visibleStart3 + 1; // même logique que Radio / VMax
+          const isGoodSpot =
+            mainRowCounter >= targetVisible3 && mainRowCounter <= visibleEnd3;
+
+          if (!bloqueoPrintedInThisRender && isGoodSpot) {
+            bloqueoPrintedInThisRender = true;
+            return <td className="ft-td">{bloqueo}</td>;
+          }
+
+          // 3) sinon, rien
+          return <td className="ft-td"></td>;
+        })()}
 
         <td className={"ft-td ft-v-cell" + vmaxHighlightClass}>
           <div className="ft-v-inner">{mainRowSpeedContent}</div>
@@ -1587,13 +1933,8 @@ rows.push(
             "ft-td" + (shouldHighlightRow ? " ft-highlight-cell" : "")
           }
         >
-          {autoScrollEnabled && i === activeRowIndex
-            ? `> ${sitKm}`
-            : sitKm}
+          {autoScrollEnabled && i === activeRowIndex ? `> ${sitKm}` : sitKm}
         </td>
-
-
-
 
         {/* Dependencia (surlignable) */}
         <td
@@ -1639,11 +1980,11 @@ rows.push(
             }
 
             // 2) sinon, on la repose sur la 2e ligne principale visible
-            const visibleStart = visibleRows.first;
-            const visibleEnd = visibleRows.last;
-            const targetVisible = visibleStart + 1; // comme VMax
+            const visibleStart4 = visibleRows.first;
+            const visibleEnd4 = visibleRows.last;
+            const targetVisible4 = visibleStart4 + 1; // comme VMax
             const isGoodSpot =
-              mainRowCounter >= targetVisible && mainRowCounter <= visibleEnd;
+              mainRowCounter >= targetVisible4 && mainRowCounter <= visibleEnd4;
 
             if (!radioPrintedInThisRender && isGoodSpot) {
               radioPrintedInThisRender = true;
@@ -1656,7 +1997,6 @@ rows.push(
         </td>
 
         <td className="ft-td ft-rc-cell" id={`rc-cell-${i}`}>
-
           {showRcBar ? (
             <div className="ft-rc-bar" />
           ) : (
@@ -1680,23 +2020,23 @@ rows.push(
       csvZoneOpen = false;
     }
 
-
     // Vérifier si c'est la dernière ligne d'une zone CSV
-if (isCsvEnd) {
-  // Si c'est la dernière ligne à surligner, on étend le surlignage à toute la ligne
-  csvHighlightByIndex[i] = "full";
-}
-
+    if (isCsvEnd) {
+      // Si c'est la dernière ligne à surligner, on étend le surlignage à toute la ligne
+      csvHighlightByIndex[i] = "full";
+    }
 
     // 3) LIGNE INTERMÉDIAIRE POUR LA VITESSE (sous la ligne principale)
     if (showSpeedSpacer) {
       // Si la zone CSV est ouverte, cette ligne est "entre deux barres" => full
       const vmaxClassForSpeed = csvZoneOpen ? " ft-v-csv-full" : "";
 
-rows.push(
-  <tr className="ft-row-spacer" key={`speed-${i}`}>
-    {(() => { renderedRowIndex++; return <td className="ft-td"></td>; })()}
-
+      rows.push(
+        <tr className="ft-row-spacer" key={`speed-${i}`}>
+          {(() => {
+            renderedRowIndex++;
+            return <td className="ft-td"></td>;
+          })()}
 
           <td className={"ft-td ft-v-cell" + vmaxClassForSpeed}>
             <div className="ft-v-inner text-center">{speedSpacerContent}</div>
@@ -1754,7 +2094,6 @@ rows.push(
       // on consomme la ligne noteOnly
       i++;
     }
-
   }
 
   //
@@ -1766,7 +2105,7 @@ rows.push(
       <style>{`
         /* ===================== FT (Feuille de Train) ===================== */
 
-                .ft-wrap {
+        .ft-wrap {
           background: transparent;
           height: 100%;
           display: flex;
@@ -1774,7 +2113,6 @@ rows.push(
           min-height: 0;
 
         }
-
 
         .ft-scroll-x {
           width: 100%;
@@ -1793,7 +2131,6 @@ rows.push(
           overflow-y: auto;
           -webkit-overflow-scrolling: touch;
         }
-
 
         .ft-table {
           border-collapse: separate;
@@ -1916,17 +2253,15 @@ rows.push(
           /* pointillés de débug retirés temporairement */
         }
 
-
-.dark .ft-row-spacer .ft-td,
-.dark .ft-row-inter .ft-td {
-  background: #000;
-  color: #fff;
-}
-.dark .ft-highlight-cell {
-  background: linear-gradient(180deg, #ffff00 0%, #fffda6 100%);
-  color: #000;
-}
-
+        .dark .ft-row-spacer .ft-td,
+        .dark .ft-row-inter .ft-td {
+          background: #000;
+          color: #fff;
+        }
+        .dark .ft-highlight-cell {
+          background: linear-gradient(180deg, #ffff00 0%, #fffda6 100%);
+          color: #000;
+        }
 
         /* Surlignage jaune (même esprit que InfoPanel) */
         .ft-highlight-cell {
@@ -1987,13 +2322,13 @@ rows.push(
             #ffc000 100%
           );
         }
-          /* Dark mode : garder le texte noir dans les Vmax surlignées */
-.dark .ft-v-cell.ft-v-csv-full,
-.dark .ft-v-cell.ft-v-csv-top,
-.dark .ft-v-cell.ft-v-csv-bottom {
-  color: #000;
-}
 
+        /* Dark mode : garder le texte noir dans les Vmax surlignées */
+        .dark .ft-v-cell.ft-v-csv-full,
+        .dark .ft-v-cell.ft-v-csv-top,
+        .dark .ft-v-cell.ft-v-csv-bottom {
+          color: #000;
+        }
 
         /* Surlignage jaune type InfoPanel */
         .ft-hl {
@@ -2118,12 +2453,9 @@ rows.push(
           padding: 2px 4px;
         }
 
-
         .ft-row-spacer .ft-td:not(.ft-hora-cell):not(:first-child) {
           font-size: 0;
         }
-
-
 
         .ft-row-spacer .ft-hora-cell {
           display: table-cell;
@@ -2222,7 +2554,7 @@ rows.push(
           color: #fff;
         }
 
-                .ft-active-line {
+        .ft-active-line {
           position: absolute;
           left: 0;
           right: 0;
@@ -2233,6 +2565,32 @@ rows.push(
           z-index: 6;
         }
 
+        /* Ligne sélectionnée pour recalage manuel : cadre rouge clignotant S + D + C + H */
+        .ft-row-main.ft-row-selected td:nth-child(3),
+        .ft-row-main.ft-row-selected td:nth-child(4),
+        .ft-row-main.ft-row-selected td:nth-child(5),
+        .ft-row-main.ft-row-selected td:nth-child(6) {
+          border-top: 2px solid red;
+          border-bottom: 2px solid red;
+          animation: ft-selection-blink 1s step-start infinite;
+        }
+
+        .ft-row-main.ft-row-selected td:nth-child(3) {
+          border-left: 2px solid red;
+        }
+
+        .ft-row-main.ft-row-selected td:nth-child(6) {
+          border-right: 2px solid red;
+        }
+
+        @keyframes ft-selection-blink {
+          0%, 50% {
+            border-color: red;
+          }
+          50.01%, 100% {
+            border-color: transparent;
+          }
+        }
 
       `}</style>
 
@@ -2264,8 +2622,13 @@ rows.push(
         </table>
 
         {/* Corps scrollable */}
-        <FTScrolling onScroll={handleScroll}>
-          <div className="ft-body-scroll">
+        <FTScrolling
+          onScroll={handleScroll}
+          onContainerRef={(el) => {
+            scrollContainerRef.current = el;
+          }}
+        >
+          <div className="ft-body-scroll" onClick={handleBodyClick}>
             <table className="ft-table">
               <tbody>{rows}</tbody>
             </table>
@@ -2273,12 +2636,8 @@ rows.push(
             {/* overlay de repère à 1/3 de la hauteur visible */}
             <div className="ft-active-line"></div>
           </div>
-
         </FTScrolling>
-
-
       </div>
-
     </section>
   );
 }
