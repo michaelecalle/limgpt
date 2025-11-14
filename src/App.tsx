@@ -37,6 +37,124 @@ export default function App() {
   // 👇 nouveau: référence vers la vidéo “keep awake”
   const keepAwakeRef = React.useRef<HTMLVideoElement | null>(null)
 
+  // === GPS LAB – état et logique de log ===
+  type GpsPoint = {
+    timestamp: string
+    lat: number
+    lon: number
+    accuracy?: number
+    speed?: number
+    heading?: number
+  }
+
+  const [gpsLogging, setGpsLogging] = React.useState(false)
+  const [gpsPoints, setGpsPoints] = React.useState<GpsPoint[]>([])
+  const [gpsError, setGpsError] = React.useState<string | null>(null)
+  const gpsWatchIdRef = React.useRef<number | null>(null)
+
+  const startGpsLogging = React.useCallback(() => {
+    if (!("geolocation" in navigator)) {
+      setGpsError("GPS non disponible sur cet appareil.")
+      return
+    }
+    setGpsError(null)
+
+    if (gpsWatchIdRef.current !== null) {
+      // déjà en cours
+      return
+    }
+
+    const id = navigator.geolocation.watchPosition(
+      (pos) => {
+        const { latitude, longitude, accuracy, speed, heading } = pos.coords
+        const ts = new Date(pos.timestamp).toISOString()
+
+        setGpsPoints((prev) => [
+          ...prev,
+          {
+            timestamp: ts,
+            lat: latitude,
+            lon: longitude,
+            accuracy,
+            speed: speed ?? undefined,
+            heading: heading ?? undefined,
+          },
+        ])
+      },
+      (err) => {
+        console.error("[GPS LAB] Erreur geolocation:", err)
+        setGpsError(err.message || "Erreur GPS.")
+        setGpsLogging(false)
+        if (gpsWatchIdRef.current !== null) {
+          navigator.geolocation.clearWatch(gpsWatchIdRef.current)
+          gpsWatchIdRef.current = null
+        }
+      },
+      {
+        enableHighAccuracy: true,
+        maximumAge: 1000,
+        timeout: 10000,
+      }
+    )
+
+    gpsWatchIdRef.current = id
+    setGpsLogging(true)
+  }, [])
+
+  const stopGpsLogging = React.useCallback(() => {
+    if ("geolocation" in navigator && gpsWatchIdRef.current !== null) {
+      navigator.geolocation.clearWatch(gpsWatchIdRef.current)
+      gpsWatchIdRef.current = null
+    }
+    setGpsLogging(false)
+  }, [])
+
+  const downloadGpsCsv = React.useCallback(() => {
+    if (gpsPoints.length === 0) {
+      setGpsError("Aucun point GPS à exporter.")
+      return
+    }
+
+    const header = "timestamp;lat;lon;accuracy_m;speed_mps;heading_deg\n"
+    const lines = gpsPoints.map((p) => {
+      const acc = p.accuracy ?? ""
+      const spd = p.speed ?? ""
+      const hdg = p.heading ?? ""
+      return `${p.timestamp};${p.lat.toFixed(7)};${p.lon.toFixed(7)};${acc};${spd};${hdg}`
+    })
+    const csv = header + lines.join("\n")
+
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement("a")
+
+    const now = new Date()
+    const pad = (n: number) => n.toString().padStart(2, "0")
+    const filename = `gps_log_${now.getFullYear()}${pad(
+      now.getMonth() + 1
+    )}${pad(now.getDate())}_${pad(now.getHours())}${pad(
+      now.getMinutes()
+    )}${pad(now.getSeconds())}.csv`
+
+    a.href = url
+    a.download = filename
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
+  }, [gpsPoints])
+
+  // nettoyage du watchPosition si on quitte la page
+  React.useEffect(() => {
+    return () => {
+      if ("geolocation" in navigator && gpsWatchIdRef.current !== null) {
+        navigator.geolocation.clearWatch(gpsWatchIdRef.current)
+        gpsWatchIdRef.current = null
+      }
+    }
+  }, [])
+  // === FIN GPS LAB ===
+
   // 👇 fonction qui essaie de lire la vidéo discrètement
   const tryPlayKeepAwake = React.useCallback(() => {
     const vid = keepAwakeRef.current
@@ -157,6 +275,53 @@ export default function App() {
         {/* Bandeau titre */}
         <TitleBar />
 
+        {/* GPS LAB — panneau de log simple */}
+        <div className="mt-2 mb-1 rounded-xl border border-dashed border-zinc-400/40 dark:border-zinc-600/60 px-3 py-2 text-xs text-zinc-700 dark:text-zinc-200 bg-zinc-50/80 dark:bg-zinc-900/60">
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex flex-col">
+              <span className="font-semibold">GPS Lab (labo uniquement)</span>
+              <span className="text-[0.7rem] text-zinc-500 dark:text-zinc-400">
+                Enregistre les positions GPS pour analyse hors ligne (ruban LAV 050).
+              </span>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={gpsLogging ? stopGpsLogging : startGpsLogging}
+                className={
+                  gpsLogging
+                    ? "px-3 py-1 rounded-full text-xs font-semibold bg-red-500 text-white"
+                    : "px-3 py-1 rounded-full text-xs font-semibold bg-emerald-500 text-white"
+                }
+              >
+                {gpsLogging ? "Stop GPS log" : "Start GPS log"}
+              </button>
+              <button
+                type="button"
+                onClick={downloadGpsCsv}
+                className="px-3 py-1 rounded-full text-xs font-semibold border border-zinc-400 dark:border-zinc-500"
+              >
+                Export CSV
+              </button>
+            </div>
+          </div>
+          <div className="mt-1 flex items-center justify-between text-[0.7rem]">
+            <div>
+              Points : <span className="font-mono">{gpsPoints.length}</span>
+              {gpsLogging && (
+                <span className="ml-2 text-amber-600 dark:text-amber-400">
+                  ● enregistrement en cours
+                </span>
+              )}
+            </div>
+            {gpsError && (
+              <div className="text-rose-600 dark:text-rose-400 truncate max-w-[50%] text-right">
+                {gpsError}
+              </div>
+            )}
+          </div>
+        </div>
+
         {/* MODE BLEU : rendu dédié */}
         {pdfMode === "blue" && (
           <div className="mt-3 flex-1 min-h-0">
@@ -237,10 +402,3 @@ export default function App() {
 
           {/* Bloc FT */}
           <div className="mt-3 flex-1 min-h-0">
-            <FT />
-          </div>
-        </div>
-      </div>
-    </main>
-  )
-}

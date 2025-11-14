@@ -145,6 +145,10 @@ export default function FT({ variant = "classic" }: FTProps) {
   const [concParHeure, setConcParHeure] = useState<Record<string, string[]>>({});
   const rcPrintedSegmentsRef = React.useRef<Set<number>>(new Set());
   const vPrintedSegmentsRef = React.useRef<Set<number>>(new Set());
+  const arrivalEventsRef = React.useRef<
+    { arrivalMin: number; rowIndex: number }[]
+  >([]);
+
 
   // -- écoute du numéro de train
   useEffect(() => {
@@ -636,6 +640,44 @@ export default function FT({ variant = "classic" }: FTProps) {
         )} | diff (minutes depuis activation) = ${elapsed} | heure EFFECTIVE utilisée pour le '>' = ${effectiveHHMM}`
       );
 
+      // 🔁 PAUSE AUTOMATIQUE SUR HEURE D’ARRIVÉE
+      const arrivalList = arrivalEventsRef.current || [];
+      if (Array.isArray(arrivalList) && arrivalList.length > 0) {
+        const matchingArrival = arrivalList.find(
+          (ev) => ev.arrivalMin === effectiveMin
+        );
+
+        if (matchingArrival) {
+          console.log(
+            "[FT][auto] Arrêt automatique sur arrivée calculée, rowIndex =",
+            matchingArrival.rowIndex,
+            "arrivalMin =",
+            matchingArrival.arrivalMin
+          );
+
+          // On place la ligne active et la sélection sur cette arrivée
+          setActiveRowIndex(matchingArrival.rowIndex);
+          setSelectedRowIndex(matchingArrival.rowIndex);
+          recalibrateFromRowRef.current = matchingArrival.rowIndex;
+
+          // On coupe l’auto-scroll et on passe en Standby (même logique que clic)
+          window.dispatchEvent(
+            new CustomEvent("ft:auto-scroll-change", {
+              detail: { enabled: false },
+            })
+          );
+
+          window.dispatchEvent(
+            new CustomEvent("lim:hourly-mode", {
+              detail: { enabled: false, standby: true },
+            })
+          );
+
+          // On s’arrête là pour cette minute : plus de recalage auto
+          return;
+        }
+      }
+
       // on cherche la ligne FT la plus proche de cette heure effective
       const mainRows = document.querySelectorAll<HTMLTableRowElement>(
         "table.ft-table tbody tr.ft-row-main"
@@ -675,6 +717,7 @@ export default function FT({ variant = "classic" }: FTProps) {
       const dataIndexAttr = tr.getAttribute("data-ft-row");
       const dataIndex = dataIndexAttr ? parseInt(dataIndexAttr, 10) : domIndex;
       setActiveRowIndex(dataIndex);
+
       // pour la TitleBar : on renvoie le décalage figé au moment du play
       const fixed = base.fixedDelay ?? 0;
       const text =
@@ -687,6 +730,7 @@ export default function FT({ variant = "classic" }: FTProps) {
           },
         })
       );
+
     };
 
     // premier calage immédiat
@@ -1355,17 +1399,20 @@ export default function FT({ variant = "classic" }: FTProps) {
 
   // CSV : état "zone ouverte" entre un bottom et un top
   let csvZoneOpen = false;
-  // compteur des VRAIES lignes principales (<tr class="ft-row-main">)
+  // compteur des VRAIES lignes principales (<tr className="ft-row-main">)
   let mainRowCounter = 0;
   // radio : on veut l'afficher une seule fois dans le viewport
   let radioPrintedInThisRender = false;
   // bloqueo : on veut l'afficher une seule fois dans le viewport
   let bloqueoPrintedInThisRender = false;
 
+  const arrivalEvents: { arrivalMin: number; rowIndex: number }[] = [];
+
   // Gestion des clics sur le corps de la FT :
   // - 1er clic en mode horaire : sélection de la ligne la plus proche => Standby
   // - 2ᵉ clic en Standby : relance du mode horaire depuis la ligne sélectionnée
   const handleBodyClick = (e: React.MouseEvent<HTMLDivElement>) => {
+
     const container = e.currentTarget;
     const clickY = e.clientY;
 
@@ -1545,8 +1592,15 @@ export default function FT({ variant = "classic" }: FTProps) {
       if (depMinutes != null) {
         const arrMinutes = depMinutes - comMinutes;
         horaArrivee = formatMinutesToHora(arrMinutes);
+
+        // On mémorise cet événement d'arrivée pour l'auto-scroll horaire
+        arrivalEvents.push({
+          arrivalMin: arrMinutes,
+          rowIndex: i,
+        });
       }
     }
+
 
     const prevHoraStr = previousHoraForConc;
     const currentHoraStr = hora;
@@ -2096,10 +2150,13 @@ export default function FT({ variant = "classic" }: FTProps) {
     }
   }
 
-  //
-  // ===== 7. RENDU FINAL ==============================================
+  // On expose la liste des heures d'arrivée calculées pour le moteur d'auto-scroll
+  arrivalEventsRef.current = arrivalEvents;
 
   //
+  // ===== 7. RENDU FINAL ==============================================
+  //
+
   return (
     <section className="ft-wrap h-full">
       <style>{`
