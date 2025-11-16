@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { initGpsPkEngine, projectGpsToPk } from '../../lib/gpsPkEngine'
 
 type LIMFields = {
   tren?: string
@@ -39,12 +40,47 @@ export default function TitleBar() {
   const [scheduleDelta, setScheduleDelta] = useState<string | null>(null)
   const [scheduleDeltaIsLarge, setScheduleDeltaIsLarge] = useState(false)
 
+  // ----- GPS / PK (moteur labo) -----
+  const [gpsPkReady, setGpsPkReady] = useState(false)
+  const gpsWatchIdRef = useRef<number | null>(null)
+
+  const gpsLastInfoRef = useRef<{
+    lat: number
+    lon: number
+    accuracy?: number
+    pk?: number | null
+    s_km?: number | null
+    dist_m?: number | null
+  } | null>(null)
 
   useEffect(() => {
     window.dispatchEvent(
       new CustomEvent('lim:pdf-mode-change', { detail: { mode: pdfMode } })
     )
   }, [pdfMode])
+  // ----- Initialisation du moteur GPS→PK -----
+  useEffect(() => {
+    let cancelled = false
+
+    ;(async () => {
+      try {
+        await initGpsPkEngine()
+        if (!cancelled) {
+          setGpsPkReady(true)
+          console.log('[TitleBar] gpsPkEngine prêt')
+        }
+      } catch (err) {
+        console.error('[TitleBar] Erreur init gpsPkEngine', err)
+        if (!cancelled) {
+          setGpsPkReady(false)
+        }
+      }
+    })()
+
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   useEffect(() => {
     const t = setInterval(() => setClock(formatTime(new Date())), 1000)
@@ -278,6 +314,104 @@ export default function TitleBar() {
     }
   }, [])
 
+  // ----- GPS : démarrage / arrêt du watchPosition -----
+  useEffect(() => {
+    // au démontage de la TitleBar, on coupe le GPS si besoin
+    return () => {
+      stopGpsWatch()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  function startGpsWatch() {
+    if (gpsWatchIdRef.current != null) {
+      // déjà en cours
+      return
+    }
+    if (typeof navigator === 'undefined' || !('geolocation' in navigator)) {
+      console.warn('[TitleBar] Geolocation non disponible')
+      setGpsState(0)
+      return
+    }
+
+    console.log('[TitleBar] Démarrage watchPosition GPS...')
+    const id = navigator.geolocation.watchPosition(
+      (pos) => {
+        const { latitude, longitude, accuracy } = pos.coords
+
+        // mémorisation brute pour debug
+        gpsLastInfoRef.current = {
+          lat: latitude,
+          lon: longitude,
+          accuracy,
+        }
+
+        if (!gpsPkReady) {
+          // GPS OK mais moteur PK pas prêt
+          setGpsState(1)
+          return
+        }
+
+        const proj = projectGpsToPk(latitude, longitude)
+        if (!proj) {
+          setGpsState(1)
+          console.log(
+            `[GPS] lat=${latitude.toFixed(6)} lon=${longitude.toFixed(
+              6
+            )} → hors ruban (proj=null)`
+          )
+          return
+        }
+
+        const { pk, s_km, distance_m } = proj
+        const dist = distance_m ?? null
+        const onLine = dist != null && dist <= 200
+
+        gpsLastInfoRef.current = {
+          lat: latitude,
+          lon: longitude,
+          accuracy,
+          pk: pk ?? null,
+          s_km: s_km ?? null,
+          dist_m: dist,
+        }
+
+        setGpsState(onLine ? 2 : 1)
+
+        console.log(
+          `[GPS] lat=${latitude.toFixed(6)} lon=${longitude.toFixed(
+            6
+          )} → PK≈${pk?.toFixed?.(3)}  s≈${s_km?.toFixed?.(
+            3
+          )} km  dist=${dist?.toFixed?.(1)} m  onLine=${onLine}`
+        )
+      },
+      (err) => {
+        console.error('[TitleBar] Erreur GPS', err)
+        setGpsState(0)
+      },
+      {
+        enableHighAccuracy: true,
+        maximumAge: 1000,
+        timeout: 10000,
+      }
+    )
+
+    gpsWatchIdRef.current = id
+    // on part du principe : signal présent mais pas encore forcément « calé »
+    setGpsState(1)
+  }
+
+  function stopGpsWatch() {
+    const id = gpsWatchIdRef.current
+    if (id != null && typeof navigator !== 'undefined' && 'geolocation' in navigator) {
+      navigator.geolocation.clearWatch(id)
+    }
+    gpsWatchIdRef.current = null
+    gpsLastInfoRef.current = null
+    setGpsState(0)
+    console.log('[TitleBar] Arrêt watchPosition GPS')
+  }
 
   const titleSuffix = trainDisplay ? ` ${trainDisplay}` : ''
   const baseTitle = `LIM${titleSuffix}`
@@ -365,12 +499,23 @@ export default function TitleBar() {
                 type="button"
                 onClick={() => {
                   const next = !autoScroll
+
+                  // 1) comportement existant : informer FT du changement d’auto-scroll
                   setAutoScroll(next)
                   window.dispatchEvent(
                     new CustomEvent('ft:auto-scroll-change', {
                       detail: { enabled: next, source: 'titlebar' },
                     })
                   )
+
+                  // 2) nouveau : démarrer / arrêter le suivi GPS
+                  if (next) {
+                    // passage en mode "lecture" → on démarre le watchPosition
+                    startGpsWatch()
+                  } else {
+                    // pause / arrêt → on coupe le GPS
+                    stopGpsWatch()
+                  }
                 }}
                 className={`h-7 w-7 rounded-full flex items-center justify-center text-[11px] transition
                   ${
@@ -400,20 +545,24 @@ export default function TitleBar() {
                 )}
               </button>
 
-              {/* GPS */}
 
+              {/* GPS */}
               <button
                 type="button"
-                onClick={() => {
-                  const next = ((gpsState + 1) % 3) as 0 | 1 | 2
-                  setGpsState(next)
-                }}
+                // indicateur uniquement : plus de changement d'état manuel
                 className={`
-                  relative h-7 px-3 rounded-full text-xs font-semibold bg-white dark:bg-zinc-900 transition
+                  relative h-7 px-3 rounded-full text-xs font-semibold bg-white dark:bg-zinc-900 transition cursor-default
                   ${gpsState === 0 ? 'border-[3px] border-red-500 text-red-600 dark:text-red-400' : ''}
                   ${gpsState === 1 ? 'border-[3px] border-orange-400 text-orange-500 dark:text-orange-300' : ''}
                   ${gpsState === 2 ? 'border-[3px] border-emerald-400 text-emerald-500 dark:text-emerald-300' : ''}
                 `}
+                title={
+                  gpsState === 0
+                    ? 'GPS indisponible / non calé'
+                    : gpsState === 1
+                      ? 'GPS présent mais hors ligne de référence'
+                      : 'GPS OK : position calée sur la ligne'
+                }
               >
                 <span className="relative z-10">GPS</span>
                 {gpsState === 0 && (
@@ -425,6 +574,7 @@ export default function TitleBar() {
                   </span>
                 )}
               </button>
+
 
               {/* Mode horaire — indicateur seulement, plus cliquable */}
               <button
