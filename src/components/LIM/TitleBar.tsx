@@ -53,6 +53,10 @@ export default function TitleBar() {
     dist_m?: number | null
   } | null>(null)
 
+  // Texte affiché dans le badge GPS quand on est calé sur la ligne (PK estimé)
+  const [gpsPkDisplay, setGpsPkDisplay] = useState<string | null>(null)
+
+
   useEffect(() => {
     window.dispatchEvent(
       new CustomEvent('lim:pdf-mode-change', { detail: { mode: pdfMode } })
@@ -314,6 +318,47 @@ export default function TitleBar() {
     }
   }, [])
 
+  // écoute directe des événements gps:position pour mettre à jour l'icône GPS + PK affiché
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const ce = e as CustomEvent<any>
+      const detail = ce.detail || {}
+
+      const hasFix =
+        typeof (detail as any).lat === 'number' &&
+        typeof (detail as any).lon === 'number'
+      const onLine = !!(detail as any).onLine
+      const pkRaw = (detail as any).pk as number | string | null | undefined
+
+      // pas de fix GPS → état 0 (rouge) + on efface le texte PK
+      if (!hasFix) {
+        setGpsState(0)
+        setGpsPkDisplay(null)
+        return
+      }
+
+      // fix présent : vert si calé sur la ligne, orange sinon
+      setGpsState(onLine ? 2 : 1)
+
+      // si position calée sur la ligne + PK dispo → on l'affiche
+      if (onLine && pkRaw != null) {
+        const pkNum = typeof pkRaw === 'number' ? pkRaw : Number(pkRaw)
+        if (Number.isFinite(pkNum)) {
+          setGpsPkDisplay(pkNum.toFixed(1)) // ex: 621.123
+          return
+        }
+      }
+
+      // hors ligne ou PK invalide → pas d'affichage numérique
+      setGpsPkDisplay(null)
+    }
+
+    window.addEventListener('gps:position', handler as EventListener)
+    return () => {
+      window.removeEventListener('gps:position', handler as EventListener)
+    }
+  }, [])
+
   // ----- GPS : démarrage / arrêt du watchPosition -----
   useEffect(() => {
     // au démontage de la TitleBar, on coupe le GPS si besoin
@@ -322,6 +367,7 @@ export default function TitleBar() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
 
   function startGpsWatch() {
     if (gpsWatchIdRef.current != null) {
@@ -378,6 +424,22 @@ export default function TitleBar() {
 
         setGpsState(onLine ? 2 : 1)
 
+        // 🔊 nouveau : diffusion globale de la position GPS projetée
+        window.dispatchEvent(
+          new CustomEvent('gps:position', {
+            detail: {
+              lat: latitude,
+              lon: longitude,
+              accuracy,
+              pk: pk ?? null,
+              s_km: s_km ?? null,
+              distance_m: dist,
+              onLine,
+              timestamp: Date.now(),
+            },
+          })
+        )
+
         console.log(
           `[GPS] lat=${latitude.toFixed(6)} lon=${longitude.toFixed(
             6
@@ -410,8 +472,10 @@ export default function TitleBar() {
     gpsWatchIdRef.current = null
     gpsLastInfoRef.current = null
     setGpsState(0)
+    setGpsPkDisplay(null)
     console.log('[TitleBar] Arrêt watchPosition GPS')
   }
+
 
   const titleSuffix = trainDisplay ? ` ${trainDisplay}` : ''
   const baseTitle = `LIM${titleSuffix}`
@@ -564,7 +628,9 @@ export default function TitleBar() {
                       : 'GPS OK : position calée sur la ligne'
                 }
               >
-                <span className="relative z-10">GPS</span>
+                <span className="relative z-10 tabular-nums">
+                  {gpsState === 2 && gpsPkDisplay ? `PK ${gpsPkDisplay}` : 'GPS'}
+                </span>
                 {gpsState === 0 && (
                   <span className="pointer-events-none absolute inset-1 z-20" aria-hidden>
                     <span

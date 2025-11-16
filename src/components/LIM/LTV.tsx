@@ -1061,6 +1061,12 @@ const LTV: React.FC = () => {
           max-width: 100%;
         }
 
+        /* Ajustement fin pour les libellés verticaux sur 2 lignes
+           (ex: "Sólo vehic." / "Cabeza") */
+        .vert-label-2l {
+          transform: translate(-50%, -50%) rotate(-90deg) translateY(2px);
+        }
+
         .ltv-th.left { text-align: left; font-weight: 700; }
 
         /* Largeurs recalées v3 (affinage post-capture)
@@ -1289,7 +1295,7 @@ const LTV: React.FC = () => {
 
             <th className="ltv-th vert" rowSpan={2}>
               <div className="vert-shell">
-                <span className="vert-label">
+                <span className="vert-label vert-label-2l">
                   Sólo vehic.<br />
                   Cabeza
                 </span>

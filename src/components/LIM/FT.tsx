@@ -9,9 +9,23 @@ import {
   type CsvSens,
 } from "../../data/ligneFT";
 
+type GpsPosition = {
+  lat: number;
+  lon: number;
+  accuracy?: number;
+  pk?: number | null;
+  s_km?: number | null;
+  distance_m?: number | null;
+  onLine?: boolean;
+  timestamp?: number;
+};
+
+type ReferenceMode = "HORAIRE" | "GPS";
+
 type FTProps = {
   variant?: "classic" | "modern";
 };
+
 
 export default function FT({ variant = "classic" }: FTProps) {
   const [visibleRows, setVisibleRows] = React.useState<{ first: number; last: number }>({
@@ -21,8 +35,12 @@ export default function FT({ variant = "classic" }: FTProps) {
   // ligne "active" quand on est en mode horaire (play)
   const [activeRowIndex, setActiveRowIndex] = useState<number>(0);
 
+  // source de référence pour la ligne active : horaire ou GPS
+  const [referenceMode, setReferenceMode] = useState<ReferenceMode>("HORAIRE");
+
   // ligne actuellement sélectionnée pour le recalage manuel
   const [selectedRowIndex, setSelectedRowIndex] = useState<number | null>(null);
+
 
   const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
   const el = e.currentTarget;
@@ -351,10 +369,26 @@ export default function FT({ variant = "classic" }: FTProps) {
   // -- écoute du bouton play/pause (auto-scroll) venant du TitleBar
   const [autoScrollEnabled, setAutoScrollEnabled] = useState(false);
   const autoScrollEnabledRef = React.useRef(false);
+  const referenceModeRef = React.useRef<ReferenceMode>("HORAIRE");
+
+  useEffect(() => {
+    referenceModeRef.current = referenceMode;
+  }, [referenceMode]);
 
   useEffect(() => {
     autoScrollEnabledRef.current = autoScrollEnabled;
   }, [autoScrollEnabled]);
+
+    useEffect(() => {
+    console.log("[FT][mode] referenceMode changé =>", referenceMode);
+
+    window.dispatchEvent(
+      new CustomEvent("lim:reference-mode", {
+        detail: { mode: referenceMode },
+      })
+    );
+  }, [referenceMode]);
+
 
   const autoScrollBaseRef =
     React.useRef<{ realMin: number; firstHoraMin: number; fixedDelay: number } | null>(null);
@@ -368,13 +402,16 @@ export default function FT({ variant = "classic" }: FTProps) {
   // Référence vers le conteneur scrollable de FTScrolling
   const scrollContainerRef = React.useRef<HTMLDivElement | null>(null);
 
+    // Dernière position GPS reçue (mémorisée pour les futurs calculs)
+  const lastGpsPositionRef = React.useRef<GpsPosition | null>(null);
+
   // Suivi du scroll manuel pendant que le mode horaire est actif
   const isManualScrollRef = React.useRef(false);
   const manualScrollTimeoutRef = React.useRef<number | null>(null);
   const lastAutoScrollTopRef = React.useRef<number | null>(null);
   const isProgrammaticScrollRef = React.useRef(false);
 
-  useEffect(() => {
+   useEffect(() => {
     function handlerAutoScroll(e: any) {
       const detail = e?.detail ?? {};
       const enabled = !!detail.enabled;
@@ -417,6 +454,7 @@ export default function FT({ variant = "classic" }: FTProps) {
         standby
       );
 
+      // 👉 Le bouton Play/Pause ne pilote QUE l'auto-scroll, pas le mode de référence
       setAutoScrollEnabled(enabled);
 
       // On informe la TitleBar de l'état horaire / standby
@@ -439,6 +477,7 @@ export default function FT({ variant = "classic" }: FTProps) {
       );
     };
   }, []);
+
 
   // quand le mode auto-scroll (play) s'allume/s'éteint
   useEffect(() => {
@@ -654,79 +693,80 @@ export default function FT({ variant = "classic" }: FTProps) {
       );
 
       // 🔁 PAUSE AUTOMATIQUE SUR HEURE D’ARRIVÉE
-      const arrivalList = arrivalEventsRef.current || [];
-      if (Array.isArray(arrivalList) && arrivalList.length > 0) {
-        const matchingArrival = arrivalList.find(
-          (ev) => ev.arrivalMin === effectiveMin
-        );
-
-        if (matchingArrival) {
-          console.log(
-            "[FT][auto] Arrêt automatique sur arrivée calculée, rowIndex =",
-            matchingArrival.rowIndex,
-            "arrivalMin =",
-            matchingArrival.arrivalMin
+      if (referenceMode === "HORAIRE") {
+        const arrivalList = arrivalEventsRef.current || [];
+        if (Array.isArray(arrivalList) && arrivalList.length > 0) {
+          const matchingArrival = arrivalList.find(
+            (ev) => ev.arrivalMin === effectiveMin
           );
 
-          // On place la ligne active et la sélection sur cette arrivée
-          setActiveRowIndex(matchingArrival.rowIndex);
-          setSelectedRowIndex(matchingArrival.rowIndex);
-          recalibrateFromRowRef.current = matchingArrival.rowIndex;
-
-          // 👉 NOUVEAU : on recale immédiatement la FT sur cette ligne
-          const container = scrollContainerRef.current;
-          if (container) {
-            const activeRow = document.querySelector<HTMLTableRowElement>(
-              `tr.ft-row-main[data-ft-row="${matchingArrival.rowIndex}"]`
+          if (matchingArrival) {
+            console.log(
+              "[FT][auto] Arrêt automatique sur arrivée calculée, rowIndex =",
+              matchingArrival.rowIndex,
+              "arrivalMin =",
+              matchingArrival.arrivalMin
             );
-            const refLine = document.querySelector<HTMLDivElement>(".ft-active-line");
 
-            if (activeRow && refLine) {
-              const rowRect = activeRow.getBoundingClientRect();
-              const refRect = refLine.getBoundingClientRect();
+            // On place la ligne active et la sélection sur cette arrivée
+            setActiveRowIndex(matchingArrival.rowIndex);
+            setSelectedRowIndex(matchingArrival.rowIndex);
+            recalibrateFromRowRef.current = matchingArrival.rowIndex;
 
-              const rowCenterY = rowRect.top + rowRect.height / 2;
-              const refCenterY = refRect.top + refRect.height / 2;
-              const delta = rowCenterY - refCenterY;
+            // 👉 NOUVEAU : on recale immédiatement la FT sur cette ligne
+            const container = scrollContainerRef.current;
+            if (container) {
+              const activeRow = document.querySelector<HTMLTableRowElement>(
+                `tr.ft-row-main[data-ft-row="${matchingArrival.rowIndex}"]`
+              );
+              const refLine = document.querySelector<HTMLDivElement>(".ft-active-line");
 
-              if (delta !== 0) {
-                const currentScrollTop = container.scrollTop;
-                let targetScrollTop = currentScrollTop + delta;
+              if (activeRow && refLine) {
+                const rowRect = activeRow.getBoundingClientRect();
+                const refRect = refLine.getBoundingClientRect();
 
-                const maxScrollTop = container.scrollHeight - container.clientHeight;
-                if (maxScrollTop >= 0) {
-                  if (targetScrollTop < 0) targetScrollTop = 0;
-                  if (targetScrollTop > maxScrollTop) targetScrollTop = maxScrollTop;
+                const rowCenterY = rowRect.top + rowRect.height / 2;
+                const refCenterY = refRect.top + refRect.height / 2;
+                const delta = rowCenterY - refCenterY;
 
-                  isProgrammaticScrollRef.current = true;
-                  container.scrollTo({
-                    top: targetScrollTop,
-                    behavior: "auto",
-                  });
-                  lastAutoScrollTopRef.current = targetScrollTop;
+                if (delta !== 0) {
+                  const currentScrollTop = container.scrollTop;
+                  let targetScrollTop = currentScrollTop + delta;
+
+                  const maxScrollTop = container.scrollHeight - container.clientHeight;
+                  if (maxScrollTop >= 0) {
+                    if (targetScrollTop < 0) targetScrollTop = 0;
+                    if (targetScrollTop > maxScrollTop) targetScrollTop = maxScrollTop;
+
+                    isProgrammaticScrollRef.current = true;
+                    container.scrollTo({
+                      top: targetScrollTop,
+                      behavior: "auto",
+                    });
+                    lastAutoScrollTopRef.current = targetScrollTop;
+                  }
                 }
               }
             }
+
+            // On coupe l’auto-scroll et on passe en Standby (même logique que clic)
+            window.dispatchEvent(
+              new CustomEvent("ft:auto-scroll-change", {
+                detail: { enabled: false },
+              })
+            );
+
+            window.dispatchEvent(
+              new CustomEvent("lim:hourly-mode", {
+                detail: { enabled: false, standby: true },
+              })
+            );
+
+            // On s’arrête là pour cette minute : plus de recalage auto
+            return;
           }
-
-          // On coupe l’auto-scroll et on passe en Standby (même logique que clic)
-          window.dispatchEvent(
-            new CustomEvent("ft:auto-scroll-change", {
-              detail: { enabled: false },
-            })
-          );
-
-          window.dispatchEvent(
-            new CustomEvent("lim:hourly-mode", {
-              detail: { enabled: false, standby: true },
-            })
-          );
-
-          // On s’arrête là pour cette minute : plus de recalage auto
-          return;
         }
       }
-
 
       // on cherche la ligne FT la plus proche de cette heure effective
       const mainRows = document.querySelectorAll<HTMLTableRowElement>(
@@ -766,7 +806,11 @@ export default function FT({ variant = "classic" }: FTProps) {
       const tr = mainRows[domIndex];
       const dataIndexAttr = tr.getAttribute("data-ft-row");
       const dataIndex = dataIndexAttr ? parseInt(dataIndexAttr, 10) : domIndex;
-      setActiveRowIndex(dataIndex);
+
+      // 👉 Le moteur horaire ne pilote la ligne active que si on est en mode HORAIRE
+      if (referenceMode === "HORAIRE") {
+        setActiveRowIndex(dataIndex);
+      }
 
       // pour la TitleBar : on renvoie le décalage figé au moment du play
       const fixed = base.fixedDelay ?? 0;
@@ -807,12 +851,14 @@ export default function FT({ variant = "classic" }: FTProps) {
         handleForceTime as EventListener
       );
     };
-  }, [autoScrollEnabled]);
+  }, [autoScrollEnabled, referenceMode]);
+
 
 
   // avance auto de la ligne active tant qu'on est en play :
   // on ajuste le scroll pour rapprocher la ligne active de la ligne rouge
-  // (on autorise désormais le scroll à monter OU descendre).
+  // (on autorise désormais le scroll à monter OU descendre),
+  // quel que soit le mode de référence (HORAIRE ou GPS).
   useEffect(() => {
     if (!autoScrollEnabled) return;
     if (activeRowIndex == null) return;
@@ -867,7 +913,7 @@ export default function FT({ variant = "classic" }: FTProps) {
       behavior: "auto",
     });
     lastAutoScrollTopRef.current = targetScrollTop;
-  }, [autoScrollEnabled, activeRowIndex]);
+  }, [autoScrollEnabled, activeRowIndex, referenceMode]);
 
 
   //
@@ -1034,6 +1080,264 @@ export default function FT({ variant = "classic" }: FTProps) {
 
     return visibleEntries;
   }, [isOdd, trainNumber, routeStart, routeEnd]);
+
+  // Trouve l'index de la ligne FT correspondant au PK GPS,
+  // en prenant la première ligne "en aval" dans le sens du parcours.
+  function findRowIndexFromPk(targetPk: number | null): number | null {
+    if (targetPk == null || !Number.isFinite(targetPk)) return null;
+
+    // Déterminer le sens PK croissant / décroissant sur la portion affichée
+    let firstPkNum: number | null = null;
+    let lastPkNum: number | null = null;
+
+    for (let i = 0; i < rawEntries.length; i++) {
+      const e = rawEntries[i];
+      if (e.isNoteOnly || !e.pk) continue;
+      const pkNum = Number(e.pk);
+      if (!Number.isFinite(pkNum)) continue;
+      firstPkNum = pkNum;
+      break;
+    }
+
+    for (let i = rawEntries.length - 1; i >= 0; i--) {
+      const e = rawEntries[i];
+      if (e.isNoteOnly || !e.pk) continue;
+      const pkNum = Number(e.pk);
+      if (!Number.isFinite(pkNum)) continue;
+      lastPkNum = pkNum;
+      break;
+    }
+
+    const ascending =
+      firstPkNum != null && lastPkNum != null
+        ? firstPkNum <= lastPkNum
+        : true;
+
+    let candidateIndex: number | null = null;
+
+    if (ascending) {
+      // PK croissants : première ligne avec PK >= PK GPS
+      for (let i = 0; i < rawEntries.length; i++) {
+        const e = rawEntries[i];
+        if (e.isNoteOnly || !e.pk) continue;
+        const pkNum = Number(e.pk);
+        if (!Number.isFinite(pkNum)) continue;
+        if (pkNum >= targetPk) {
+          candidateIndex = i;
+          break;
+        }
+      }
+    } else {
+      // PK décroissants : première ligne avec PK <= PK GPS
+      for (let i = 0; i < rawEntries.length; i++) {
+        const e = rawEntries[i];
+        if (e.isNoteOnly || !e.pk) continue;
+        const pkNum = Number(e.pk);
+        if (!Number.isFinite(pkNum)) continue;
+        if (pkNum <= targetPk) {
+          candidateIndex = i;
+          break;
+        }
+      }
+    }
+
+    // Si on n'a rien trouvé "en aval", on retombe sur la plus proche
+    if (candidateIndex == null) {
+      let bestIndex: number | null = null;
+      let bestDelta = Number.POSITIVE_INFINITY;
+
+      for (let i = 0; i < rawEntries.length; i++) {
+        const e = rawEntries[i];
+        if (e.isNoteOnly || !e.pk) continue;
+
+        const pkNum = Number(e.pk);
+        if (!Number.isFinite(pkNum)) continue;
+
+        const delta = Math.abs(pkNum - targetPk);
+        if (delta < bestDelta) {
+          bestDelta = delta;
+          bestIndex = i;
+        }
+      }
+
+      candidateIndex = bestIndex;
+    }
+
+    return candidateIndex;
+  }
+  function resolveHoraForRowIndex(rowIndex: number): string {
+    const entry = rawEntries[rowIndex];
+    if (!entry) return "";
+
+    // 1) Hora directe issue de la FT, si présente
+    const directHora = (entry as any).hora ?? "";
+    if (typeof directHora === "string" && directHora.trim().length > 0) {
+      return directHora.trim();
+    }
+
+    // 2) Sinon, on reconstruit le mapping "ligne éligible" ↔ heuresDetectees
+    const eligibleIndices: number[] = [];
+
+    for (let i = 0; i < rawEntries.length; i++) {
+      const e = rawEntries[i];
+      if (e.isNoteOnly) continue;
+
+      const s = (e.pk ?? "").toString().trim();
+      const d = (e.dependencia ?? "").toString().trim();
+
+      if (s.length > 0 && d.length > 0) {
+        eligibleIndices.push(i);
+      }
+    }
+
+    const pos = eligibleIndices.indexOf(rowIndex);
+    if (pos === -1) return "";
+    if (pos >= heuresDetectees.length) return "";
+
+    const mappedHora = heuresDetectees[pos];
+    return typeof mappedHora === "string" ? mappedHora.trim() : "";
+  }
+
+  // -- écoute des positions GPS projetées (évènement gps:position)
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const ce = e as CustomEvent<any>;
+      const detail = ce.detail || {};
+
+      // On mémorise brut pour l'instant (lat, lon, pk, etc.)
+      lastGpsPositionRef.current = detail as GpsPosition;
+
+      console.log("[FT][gps] position reçue =", detail);
+      console.log("[FT][gps] rawEntries.length =", rawEntries.length);
+
+      const pk = (detail as any).pk as number | null | undefined;
+
+      // --- Mise à jour du mode de référence (HORAIRE / GPS) ---
+      const hasGpsFix =
+        typeof (detail as any).lat === "number" &&
+        typeof (detail as any).lon === "number";
+
+      const onLine = !!(detail as any).onLine;
+
+      let nextMode: ReferenceMode = referenceMode;
+
+      if (hasGpsFix && onLine) {
+        // GPS valide ET position projetée sur la ligne
+        nextMode = "GPS";
+      } else {
+        // soit pas de fix GPS, soit fix mais pas projetable sur la ligne
+        nextMode = "HORAIRE";
+      }
+
+      if (nextMode !== referenceMode) {
+        console.log("[FT][gps] Changement de mode de référence =>", nextMode);
+        setReferenceMode(nextMode);
+      }
+
+      if (pk != null) {
+        const idx = findRowIndexFromPk(pk);
+        if (idx != null) {
+          const entry = rawEntries[idx];
+          console.log(
+            "[FT][gps] pk≈",
+            pk,
+            " → ligne FT index=",
+            idx,
+            " pk=",
+            entry?.pk,
+            " dependencia=",
+            entry?.dependencia
+          );
+
+          // 🧭 En mode GPS calé sur la ligne → la ligne active est pilotée par le PK
+          if (hasGpsFix && onLine && nextMode === "GPS") {
+            // Ligne active = ligne GPS (PK projeté)
+            setActiveRowIndex(idx);
+
+            // On récupère l'heure "effectivement utilisée" pour cette ligne :
+            // - soit hora de la FT brute
+            // - soit heure injectée via heuresDetectees (mapping S&D)
+            const horaText = resolveHoraForRowIndex(idx);
+
+            if (typeof horaText === "string" && horaText.trim().length > 0) {
+              // 1) On note la ligne pour les futurs démarrages du mode horaire
+              recalibrateFromRowRef.current = idx;
+
+              // 2) On recalcule le delta réel (maintenant - heure FT de cette ligne)
+              const horaMinutes = parseHoraToMinutes(horaText);
+              if (horaMinutes != null) {
+                const now = new Date();
+                const nowMinutes = now.getHours() * 60 + now.getMinutes();
+
+                const fixedDelay = nowMinutes - horaMinutes;
+
+                // 3) On recale la base interne du mode horaire sur cette ligne
+                autoScrollBaseRef.current = {
+                  realMin: nowMinutes,
+                  firstHoraMin: horaMinutes,
+                  fixedDelay,
+                };
+
+                // 4) On met à jour immédiatement le delta affiché dans la TitleBar
+                const text =
+                  fixedDelay === 0
+                    ? "0 min"
+                    : fixedDelay > 0
+                      ? `+ ${fixedDelay} min`
+                      : `- ${-fixedDelay} min`;
+
+                window.dispatchEvent(
+                  new CustomEvent("lim:schedule-delta", {
+                    detail: {
+                      text,
+                      isLargeDelay: Math.abs(fixedDelay) >= 5,
+                    },
+                  })
+                );
+
+                console.log(
+                  "[FT][gps] Recalage horaire via GPS — hora=",
+                  horaText,
+                  " (",
+                  horaMinutes,
+                  "min ) / now=",
+                  now.getHours().toString().padStart(2, "0") +
+                    ":" +
+                    now.getMinutes().toString().padStart(2, "0"),
+                  " => delta=",
+                  fixedDelay,
+                  "min (ligne index=",
+                  idx,
+                  ")"
+                );
+              } else {
+                console.warn(
+                  "[FT][gps] Impossible de parser l'heure pour recalage via GPS:",
+                  horaText
+                );
+              }
+            } else {
+              console.log(
+                "[FT][gps] Ligne GPS sans heure résolue (ni FT brute, ni mapping S&D) -> pas de recalage"
+              );
+            }
+          }
+        } else {
+          console.log(
+            "[FT][gps] pk≈",
+            pk,
+            " → aucune ligne FT correspondante trouvée"
+          );
+        }
+      }
+    };
+
+    window.addEventListener("gps:position", handler as EventListener);
+    return () => {
+      window.removeEventListener("gps:position", handler as EventListener);
+    };
+  }, [rawEntries, referenceMode, heuresDetectees]);
+
 
   //
   // ===== 4. HELPERS REMARQUES ROUGES =================================
@@ -2037,8 +2341,26 @@ export default function FT({ variant = "classic" }: FTProps) {
             "ft-td" + (shouldHighlightRow ? " ft-highlight-cell" : "")
           }
         >
-          {autoScrollEnabled && i === activeRowIndex ? `> ${sitKm}` : sitKm}
+          {(() => {
+            const isActive = autoScrollEnabled && i === activeRowIndex;
+
+            if (!isActive) {
+              return sitKm;
+            }
+
+            const markerClass =
+              referenceMode === "GPS"
+                ? "ft-active-marker-gps"
+                : "ft-active-marker-horaire";
+
+            return (
+              <span className={markerClass}>
+                {`> ${sitKm}`}
+              </span>
+            );
+          })()}
         </td>
+
 
         {/* Dependencia (surlignable) */}
         <td
@@ -2670,6 +2992,22 @@ export default function FT({ variant = "classic" }: FTProps) {
           background: red;
           pointer-events: none;
           z-index: 6;
+        }
+        /* Couleur du '>' de la ligne active (debug) */
+        .ft-active-marker-gps {
+          color: #16a34a; /* vert GPS */
+        }
+
+        .ft-active-marker-horaire {
+          color: #2563eb; /* bleu HORAIRE */
+        }
+
+        .dark .ft-active-marker-gps {
+          color: #4ade80;
+        }
+
+        .dark .ft-active-marker-horaire {
+          color: #60a5fa;
         }
 
         /* Ligne sélectionnée pour recalage manuel : cadre rouge clignotant S + D + C + H */
