@@ -1,8 +1,8 @@
 import React from "react"
-import InfoPanel from "./InfoPanel"
 import ClassicInfoPanel from "./ClassicInfoPanel"
 
 type LIMData = {
+
   train?: string
   type?: string
   relation?: string
@@ -45,11 +45,6 @@ function buildPanelData(src: any): any {
 }
 
 export default function Infos() {
-  const [mode, setMode] = React.useState<'moderne' | 'classique'>(() => {
-    const m = localStorage.getItem('infos-mode')
-    return (m === 'classique' || m === 'moderne') ? (m as any) : 'moderne'
-  })
-
   const [raw, setRaw] = React.useState<LIMData>(() => {
     const w = window as any
     return (w.__limLastParsed || {}) as LIMData
@@ -67,16 +62,9 @@ export default function Infos() {
     return () => window.removeEventListener('lim:parsed', onParsed as EventListener)
   }, [])
 
-  // persistance du mode d'affichage (moderne / classique)
-  React.useEffect(() => {
-    try { localStorage.setItem('infos-mode', mode) } catch {}
-  }, [mode])
-
-  const toggle = () => setMode(m => m === 'moderne' ? 'classique' : 'moderne')
-
   const panelData = buildPanelData(raw)
 
-  // >>> AJOUT CRITIQUE <<<
+  // >>> AJOUT CRITIQUE <<< 
   // Dès qu'on connaît le numéro de train normalisé (panelData.tren),
   // on le diffuse en global pour FT.
   React.useEffect(() => {
@@ -102,17 +90,9 @@ export default function Infos() {
   // <<< FIN AJOUT CRITIQUE <<<
 
   return (
-    <section
-      className="group/infos relative"
-      data-mode={mode}
-      onClick={toggle}
-      title={mode === 'moderne' ? 'Passer en thème classique' : 'Revenir au thème moderne'}
-      style={{cursor:'pointer'}}
-    >
-      {mode === 'classique'
-        ? <ClassicInfoPanel data={panelData} />
-        : <InfoPanel data={panelData} />
-      }
+    <section className="group/infos relative">
+      <ClassicInfoPanel data={panelData} />
     </section>
   )
 }
+

@@ -473,6 +473,18 @@ export default function FT({ variant = "classic" }: FTProps) {
       return `${hh}:${mm}`;
     };
 
+    // ➜ nouvel helper : delta arrondi à la minute la plus proche
+    const computeFixedDelayMinutes = (now: Date, ftMinutes: number) => {
+      const nowTotalSec =
+        now.getHours() * 3600 +
+        now.getMinutes() * 60 +
+        now.getSeconds();
+      const ftTotalSec = ftMinutes * 60;
+      const deltaSec = nowTotalSec - ftTotalSec;
+      // arrondi à la minute entière la plus proche
+      return Math.round(deltaSec / 60);
+    };
+
     // Base "classique" : à partir de la première heure FT dispo
     const captureBaseFromFirstRow = () => {
       const now = new Date();
@@ -501,8 +513,8 @@ export default function FT({ variant = "classic" }: FTProps) {
 
       if (firstHoraMin == null) return null;
 
-      // 🔒 on fige l’avance/retard de départ
-      const fixedDelay = nowMin - firstHoraMin;
+      // 🔒 on fige l’avance/retard de départ (arrondi)
+      const fixedDelay = computeFixedDelayMinutes(now, firstHoraMin);
 
       return { realMin: nowMin, firstHoraMin, fixedDelay };
     };
@@ -538,7 +550,8 @@ export default function FT({ variant = "classic" }: FTProps) {
       const rowMin = toMinutes(horaText);
       if (Number.isNaN(rowMin)) return null;
 
-      const fixedDelay = nowMin - rowMin;
+      // 🔒 avance/retard arrondi sur la ligne choisie
+      const fixedDelay = computeFixedDelayMinutes(now, rowMin);
       return { realMin: nowMin, firstHoraMin: rowMin, fixedDelay };
     };
 
@@ -660,6 +673,42 @@ export default function FT({ variant = "classic" }: FTProps) {
           setSelectedRowIndex(matchingArrival.rowIndex);
           recalibrateFromRowRef.current = matchingArrival.rowIndex;
 
+          // 👉 NOUVEAU : on recale immédiatement la FT sur cette ligne
+          const container = scrollContainerRef.current;
+          if (container) {
+            const activeRow = document.querySelector<HTMLTableRowElement>(
+              `tr.ft-row-main[data-ft-row="${matchingArrival.rowIndex}"]`
+            );
+            const refLine = document.querySelector<HTMLDivElement>(".ft-active-line");
+
+            if (activeRow && refLine) {
+              const rowRect = activeRow.getBoundingClientRect();
+              const refRect = refLine.getBoundingClientRect();
+
+              const rowCenterY = rowRect.top + rowRect.height / 2;
+              const refCenterY = refRect.top + refRect.height / 2;
+              const delta = rowCenterY - refCenterY;
+
+              if (delta !== 0) {
+                const currentScrollTop = container.scrollTop;
+                let targetScrollTop = currentScrollTop + delta;
+
+                const maxScrollTop = container.scrollHeight - container.clientHeight;
+                if (maxScrollTop >= 0) {
+                  if (targetScrollTop < 0) targetScrollTop = 0;
+                  if (targetScrollTop > maxScrollTop) targetScrollTop = maxScrollTop;
+
+                  isProgrammaticScrollRef.current = true;
+                  container.scrollTo({
+                    top: targetScrollTop,
+                    behavior: "auto",
+                  });
+                  lastAutoScrollTopRef.current = targetScrollTop;
+                }
+              }
+            }
+          }
+
           // On coupe l’auto-scroll et on passe en Standby (même logique que clic)
           window.dispatchEvent(
             new CustomEvent("ft:auto-scroll-change", {
@@ -677,6 +726,7 @@ export default function FT({ variant = "classic" }: FTProps) {
           return;
         }
       }
+
 
       // on cherche la ligne FT la plus proche de cette heure effective
       const mainRows = document.querySelectorAll<HTMLTableRowElement>(
@@ -730,7 +780,6 @@ export default function FT({ variant = "classic" }: FTProps) {
           },
         })
       );
-
     };
 
     // premier calage immédiat
@@ -759,6 +808,7 @@ export default function FT({ variant = "classic" }: FTProps) {
       );
     };
   }, [autoScrollEnabled]);
+
 
   // avance auto de la ligne active tant qu'on est en play :
   // on ajuste le scroll pour rapprocher la ligne active de la ligne rouge

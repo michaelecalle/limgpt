@@ -3,7 +3,11 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 type LIMFields = {
   tren?: string
   trenPadded?: string
+  type?: string
+  composicion?: string
+  unit?: string
 }
+
 
 function toTitleNumber(s?: string | null): string | undefined {
   if (!s) return undefined
@@ -35,9 +39,6 @@ export default function TitleBar() {
   const [scheduleDelta, setScheduleDelta] = useState<string | null>(null)
   const [scheduleDeltaIsLarge, setScheduleDeltaIsLarge] = useState(false)
 
-
-  // ➜ vidéo de réveil
-  const keepAwakeRef = useRef<HTMLVideoElement | null>(null)
 
   useEffect(() => {
     window.dispatchEvent(
@@ -141,40 +142,64 @@ export default function TitleBar() {
       window.dispatchEvent(new CustomEvent('ft:import-pdf', { detail: { file } }))
       window.dispatchEvent(new CustomEvent('lim:pdf-raw', { detail: { file } }))
       setPdfMode('green')
-
-      // 👉 on tente de lancer la vidéo keep-awake juste après le geste utilisateur
-      const v = keepAwakeRef.current
-      if (v) {
-        v.play().catch((err) => {
-          console.warn('[keepawake] play() refusé', err)
-        })
-      }
     }
     if (inputRef.current) inputRef.current.value = ''
   }
 
-  // ----- NUMÉRO DE TRAIN -----
+
+  // ----- NUMÉRO DE TRAIN + TYPE + COMPOSITION -----
   const [trainDisplay, setTrainDisplay] = useState<string | undefined>(() => {
     const w = window as any
     const last: LIMFields | undefined = w.__limLastParsed
     const raw = last?.trenPadded ?? last?.tren
     return toTitleNumber(raw)
   })
+
+  const [trainType, setTrainType] = useState<string | undefined>(() => {
+    const w = window as any
+    const last: any = (w.__limLastParsed || {})
+    const rawType = last?.type
+    return rawType ? String(rawType) : undefined
+  })
+
+  const [trainComposition, setTrainComposition] = useState<string | undefined>(() => {
+    const w = window as any
+    const last: any = (w.__limLastParsed || {})
+    const rawComp = last?.composicion ?? last?.unit
+    return rawComp ? String(rawComp) : undefined
+  })
+
+  const [folded, setFolded] = useState(false)
+
   useEffect(() => {
+
     const onParsed = (e: Event) => {
       const ce = e as CustomEvent
       const detail = (ce.detail || {}) as LIMFields
       ;(window as any).__limLastParsed = detail
+
+      // mise à jour du numéro de train
       const raw = detail.trenPadded ?? detail.tren
       const disp = toTitleNumber(raw)
       setTrainDisplay(disp)
+
+      // mise à jour du type (ex: T200)
+      const rawType = (detail as any).type
+      setTrainType(rawType ? String(rawType) : undefined)
+
+      // mise à jour de la composition (ex: US)
+      const rawComp = (detail as any).composicion ?? (detail as any).unit
+      setTrainComposition(rawComp ? String(rawComp) : undefined)
     }
+
     const onTrain = (e: Event) => {
       const ce = e as CustomEvent
       const val = (ce.detail as any)?.train as string | undefined
       const disp = toTitleNumber(val)
       if (disp) setTrainDisplay(disp)
+      // lim:train ne transporte pas forcément type/composition → on ne les touche pas ici
     }
+
     window.addEventListener('lim:parsed', onParsed as EventListener)
     window.addEventListener('lim:train', onTrain as EventListener)
     return () => {
@@ -182,6 +207,7 @@ export default function TitleBar() {
       window.removeEventListener('lim:train', onTrain as EventListener)
     }
   }, [])
+
   // écoute les mises à jour d'avance/retard envoyées par le reste de l'app
   useEffect(() => {
     const handler = (e: Event) => {
@@ -254,8 +280,35 @@ export default function TitleBar() {
 
 
   const titleSuffix = trainDisplay ? ` ${trainDisplay}` : ''
+  const baseTitle = `LIM${titleSuffix}`
+
+  const extendedParts: string[] = []
+  if (trainType && String(trainType).trim().length > 0) {
+    extendedParts.push(String(trainType).trim())
+  }
+  if (trainComposition && String(trainComposition).trim().length > 0) {
+    extendedParts.push(String(trainComposition).trim())
+  }
+
+  const fullTitle =
+    folded && extendedParts.length > 0
+      ? `${baseTitle} - ${extendedParts.join(' - ')}`
+      : baseTitle
+
+  const handleTitleClick = () => {
+    setFolded((prev) => {
+      const next = !prev
+      window.dispatchEvent(
+        new CustomEvent('lim:infos-ltv-fold-change', {
+          detail: { folded: next },
+        })
+      )
+      return next
+    })
+  }
 
   const IconSun = () => (
+
 
 
     <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" className="opacity-80">
@@ -396,10 +449,20 @@ export default function TitleBar() {
 
         {/* Centre — Titre */}
         <div className="min-w-0 flex-1 text-center">
-          <div className="truncate text-[18px] leading-none font-semibold tracking-tight">
-            LIM{titleSuffix}
-          </div>
+          <button
+            type="button"
+            onClick={handleTitleClick}
+            className="max-w-full truncate text-[18px] leading-none font-semibold tracking-tight bg-transparent border-0 cursor-pointer"
+            title={
+              folded
+                ? 'Afficher les blocs INFOS et LTV'
+                : 'Afficher uniquement la zone FT'
+            }
+          >
+            {fullTitle}
+          </button>
         </div>
+
 
         {/* Droite — Contrôles */}
         <div className="flex items-center gap-2">
@@ -513,23 +576,7 @@ export default function TitleBar() {
         </div>
       </div>
 
-      {/* vidéo keep-awake quasi invisible */}
-      <video
-        ref={keepAwakeRef}
-        src="/keepawake.mp4"
-        loop
-        playsInline
-        style={{
-          position: 'fixed',
-          bottom: 0,
-          right: 0,
-          width: '1px',
-          height: '1px',
-          opacity: 0.01,
-          pointerEvents: 'none',
-          zIndex: 1,
-        }}
-      />
+
     </header>
   )
 }

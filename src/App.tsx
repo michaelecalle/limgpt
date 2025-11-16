@@ -25,10 +25,12 @@ import { APP_VERSION } from "./components/version"
 
 export default function App() {
   const [pdfMode, setPdfMode] = React.useState<"blue" | "green" | "red">("blue")
+  const [foldInfosLtv, setFoldInfosLtv] = React.useState(false)
   const [isDark, setIsDark] = React.useState(() => {
     if (typeof document === "undefined") return false
     const html = document.documentElement
     return html.classList.contains("dark") || html.getAttribute("data-theme") === "dark"
+
   })
   const [pdfUrl, setPdfUrl] = React.useState<string | null>(null)
   const [rawPdfFile, setRawPdfFile] = React.useState<File | null>(null)
@@ -252,10 +254,24 @@ export default function App() {
     }
   }, [])
 
+  // pliage INFOS/LTV (événement envoyé par TitleBar)
+  React.useEffect(() => {
+    const handler = (e: Event) => {
+      const ce = e as CustomEvent
+      const folded = !!ce.detail?.folded
+      setFoldInfosLtv(folded)
+    }
+    window.addEventListener("lim:infos-ltv-fold-change", handler as EventListener)
+    return () => {
+      window.removeEventListener("lim:infos-ltv-fold-change", handler as EventListener)
+    }
+  }, [])
+
   // 👇 au premier rendu, on tente une fois de plus
   React.useEffect(() => {
     tryPlayKeepAwake()
   }, [tryPlayKeepAwake])
+
 
   return (
     <main className="p-2 sm:p-4 h-screen flex flex-col">
@@ -390,14 +406,16 @@ export default function App() {
               : "mt-3 mx-auto max-w-7xl flex-1 min-h-0 flex flex-col hidden"
           }
         >
-          {/* Bloc infos */}
-          <div className="mt-0">
-            <Infos />
-          </div>
+          <div className={foldInfosLtv ? "hidden" : "block"}>
+            {/* Bloc infos */}
+            <div className="mt-0">
+              <Infos />
+            </div>
 
-          {/* Bloc LTV */}
-          <div className="mt-3">
-            <LTV />
+            {/* Bloc LTV */}
+            <div className="mt-3">
+              <LTV />
+            </div>
           </div>
 
           {/* Bloc FT */}
@@ -405,6 +423,7 @@ export default function App() {
             <FT />
           </div>
         </div>
+
       </div>
     </main>
   )
