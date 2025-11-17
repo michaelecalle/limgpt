@@ -1,4 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import {
+  startTestSession,
+  stopTestSession,
+  exportTestLog,
+  logTestEvent,
+} from '../../lib/testLogger'
+
 import { initGpsPkEngine, projectGpsToPk } from '../../lib/gpsPkEngine'
 
 type LIMFields = {
@@ -8,7 +15,6 @@ type LIMFields = {
   composicion?: string
   unit?: string
 }
-
 
 function toTitleNumber(s?: string | null): string | undefined {
   if (!s) return undefined
@@ -36,6 +42,8 @@ export default function TitleBar() {
   const [hourlyMode, setHourlyMode] = useState(false)
   const [standbyMode, setStandbyMode] = useState(false)
   const [pdfMode, setPdfMode] = useState<'blue' | 'green' | 'red'>('blue')
+  const [testRecording, setTestRecording] = useState(false)
+
   // avance/retard affiché à côté de l'heure (ex: "+3 min" ou "-1 min")
   const [scheduleDelta, setScheduleDelta] = useState<string | null>(null)
   const [scheduleDeltaIsLarge, setScheduleDeltaIsLarge] = useState(false)
@@ -56,12 +64,12 @@ export default function TitleBar() {
   // Texte affiché dans le badge GPS quand on est calé sur la ligne (PK estimé)
   const [gpsPkDisplay, setGpsPkDisplay] = useState<string | null>(null)
 
-
   useEffect(() => {
     window.dispatchEvent(
       new CustomEvent('lim:pdf-mode-change', { detail: { mode: pdfMode } })
     )
   }, [pdfMode])
+
   // ----- Initialisation du moteur GPS→PK -----
   useEffect(() => {
     let cancelled = false
@@ -162,7 +170,9 @@ export default function TitleBar() {
     try {
       localStorage.setItem('brightness', String(brightness))
     } catch {}
-    window.dispatchEvent(new CustomEvent('lim:brightness-change', { detail: { brightness } }))
+    window.dispatchEvent(
+      new CustomEvent('lim:brightness-change', { detail: { brightness } })
+    )
     return () => {
       ;[html, body, root, main].forEach((el) => {
         if (el) (el as HTMLElement).style.filter = ''
@@ -186,7 +196,6 @@ export default function TitleBar() {
     if (inputRef.current) inputRef.current.value = ''
   }
 
-
   // ----- NUMÉRO DE TRAIN + TYPE + COMPOSITION -----
   const [trainDisplay, setTrainDisplay] = useState<string | undefined>(() => {
     const w = window as any
@@ -197,14 +206,14 @@ export default function TitleBar() {
 
   const [trainType, setTrainType] = useState<string | undefined>(() => {
     const w = window as any
-    const last: any = (w.__limLastParsed || {})
+    const last: any = w.__limLastParsed || {}
     const rawType = last?.type
     return rawType ? String(rawType) : undefined
   })
 
   const [trainComposition, setTrainComposition] = useState<string | undefined>(() => {
     const w = window as any
-    const last: any = (w.__limLastParsed || {})
+    const last: any = w.__limLastParsed || {}
     const rawComp = last?.composicion ?? last?.unit
     return rawComp ? String(rawComp) : undefined
   })
@@ -212,7 +221,6 @@ export default function TitleBar() {
   const [folded, setFolded] = useState(false)
 
   useEffect(() => {
-
     const onParsed = (e: Event) => {
       const ce = e as CustomEvent
       const detail = (ce.detail || {}) as LIMFields
@@ -292,7 +300,6 @@ export default function TitleBar() {
     }
   }, [])
 
-
   // synchronise le bouton Play/Pause + état horaire/standby si FT change le mode auto-scroll
   useEffect(() => {
     const handler = (e: Event) => {
@@ -368,7 +375,6 @@ export default function TitleBar() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-
   function startGpsWatch() {
     if (gpsWatchIdRef.current != null) {
       // déjà en cours
@@ -377,10 +383,14 @@ export default function TitleBar() {
     if (typeof navigator === 'undefined' || !('geolocation' in navigator)) {
       console.warn('[TitleBar] Geolocation non disponible')
       setGpsState(0)
+      // log échec démarrage GPS
+      logTestEvent('gps:watch:start:failed', { reason: 'no_geolocation' })
       return
     }
 
     console.log('[TitleBar] Démarrage watchPosition GPS...')
+    logTestEvent('gps:watch:start', {})
+
     const id = navigator.geolocation.watchPosition(
       (pos) => {
         const { latitude, longitude, accuracy } = pos.coords
@@ -395,6 +405,11 @@ export default function TitleBar() {
         if (!gpsPkReady) {
           // GPS OK mais moteur PK pas prêt
           setGpsState(1)
+          logTestEvent('gps:position:noPkEngine', {
+            lat: latitude,
+            lon: longitude,
+            accuracy,
+          })
           return
         }
 
@@ -406,6 +421,11 @@ export default function TitleBar() {
               6
             )} → hors ruban (proj=null)`
           )
+          logTestEvent('gps:position:offLine', {
+            lat: latitude,
+            lon: longitude,
+            accuracy,
+          })
           return
         }
 
@@ -424,7 +444,18 @@ export default function TitleBar() {
 
         setGpsState(onLine ? 2 : 1)
 
-        // 🔊 nouveau : diffusion globale de la position GPS projetée
+        // log de la position projetée
+        logTestEvent('gps:position', {
+          lat: latitude,
+          lon: longitude,
+          accuracy,
+          pk: pk ?? null,
+          s_km: s_km ?? null,
+          distance_m: dist,
+          onLine,
+        })
+
+        // 🔊 diffusion globale de la position GPS projetée
         window.dispatchEvent(
           new CustomEvent('gps:position', {
             detail: {
@@ -451,6 +482,11 @@ export default function TitleBar() {
       (err) => {
         console.error('[TitleBar] Erreur GPS', err)
         setGpsState(0)
+
+        logTestEvent('gps:watch:error', {
+          code: (err as any)?.code ?? null,
+          message: (err as any)?.message ?? String(err),
+        })
       },
       {
         enableHighAccuracy: true,
@@ -466,6 +502,11 @@ export default function TitleBar() {
 
   function stopGpsWatch() {
     const id = gpsWatchIdRef.current
+
+    if (id != null) {
+      logTestEvent('gps:watch:stop', {})
+    }
+
     if (id != null && typeof navigator !== 'undefined' && 'geolocation' in navigator) {
       navigator.geolocation.clearWatch(id)
     }
@@ -475,7 +516,6 @@ export default function TitleBar() {
     setGpsPkDisplay(null)
     console.log('[TitleBar] Arrêt watchPosition GPS')
   }
-
 
   const titleSuffix = trainDisplay ? ` ${trainDisplay}` : ''
   const baseTitle = `LIM${titleSuffix}`
@@ -506,10 +546,13 @@ export default function TitleBar() {
   }
 
   const IconSun = () => (
-
-
-
-    <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" className="opacity-80">
+    <svg
+      viewBox="0 0 24 24"
+      width="16"
+      height="16"
+      aria-hidden="true"
+      className="opacity-80"
+    >
       <circle cx="12" cy="12" r="4" />
       <g strokeWidth="1.5" stroke="currentColor" fill="none">
         <path d="M12 2v2M12 20v2M4 12H2M22 12h-2M5 5l-1.4-1.4M20.4 20.4L19 19M5 19l-1.4 1.4M20.4 3.6L19 5" />
@@ -517,12 +560,24 @@ export default function TitleBar() {
     </svg>
   )
   const IconMoon = () => (
-    <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" className="opacity-80">
+    <svg
+      viewBox="0 0 24 24"
+      width="16"
+      height="16"
+      aria-hidden="true"
+      className="opacity-80"
+    >
       <path d="M21 12.8A9 9 0 1 1 11.2 3 7 7 0 0 0 21 12.8z" />
     </svg>
   )
   const IconFile = () => (
-    <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" className="opacity-80">
+    <svg
+      viewBox="0 0 24 24"
+      width="16"
+      height="16"
+      aria-hidden="true"
+      className="opacity-80"
+    >
       <path
         d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"
         fill="currentColor"
@@ -564,6 +619,12 @@ export default function TitleBar() {
                 onClick={() => {
                   const next = !autoScroll
 
+                  // log du clic Play/Pause
+                  logTestEvent('ui:autoScroll:toggle', {
+                    enabled: next,
+                    source: 'titlebar',
+                  })
+
                   // 1) comportement existant : informer FT du changement d’auto-scroll
                   setAutoScroll(next)
                   window.dispatchEvent(
@@ -572,7 +633,7 @@ export default function TitleBar() {
                     })
                   )
 
-                  // 2) nouveau : démarrer / arrêter le suivi GPS
+                  // 2) démarrer / arrêter le suivi GPS
                   if (next) {
                     // passage en mode "lecture" → on démarre le watchPosition
                     startGpsWatch()
@@ -590,7 +651,6 @@ export default function TitleBar() {
                         : 'bg-zinc-200/70 text-zinc-800 dark:bg-zinc-700/70 dark:text-zinc-100'
                   }
                 `}
-
                 title={
                   autoScroll
                     ? 'Désactiver le défilement automatique'
@@ -609,16 +669,27 @@ export default function TitleBar() {
                 )}
               </button>
 
-
               {/* GPS */}
               <button
                 type="button"
                 // indicateur uniquement : plus de changement d'état manuel
                 className={`
                   relative h-7 px-3 rounded-full text-xs font-semibold bg-white dark:bg-zinc-900 transition cursor-default
-                  ${gpsState === 0 ? 'border-[3px] border-red-500 text-red-600 dark:text-red-400' : ''}
-                  ${gpsState === 1 ? 'border-[3px] border-orange-400 text-orange-500 dark:text-orange-300' : ''}
-                  ${gpsState === 2 ? 'border-[3px] border-emerald-400 text-emerald-500 dark:text-emerald-300' : ''}
+                  ${
+                    gpsState === 0
+                      ? 'border-[3px] border-red-500 text-red-600 dark:text-red-400'
+                      : ''
+                  }
+                  ${
+                    gpsState === 1
+                      ? 'border-[3px] border-orange-400 text-orange-500 dark:text-orange-300'
+                      : ''
+                  }
+                  ${
+                    gpsState === 2
+                      ? 'border-[3px] border-emerald-400 text-emerald-500 dark:text-emerald-300'
+                      : ''
+                  }
                 `}
                 title={
                   gpsState === 0
@@ -632,7 +703,10 @@ export default function TitleBar() {
                   {gpsState === 2 && gpsPkDisplay ? `PK ${gpsPkDisplay}` : 'GPS'}
                 </span>
                 {gpsState === 0 && (
-                  <span className="pointer-events-none absolute inset-1 z-20" aria-hidden>
+                  <span
+                    className="pointer-events-none absolute inset-1 z-20"
+                    aria-hidden
+                  >
                     <span
                       className="absolute top-1/2 left-1 right-1 h-[2px] bg-red-500/80"
                       style={{ transform: 'rotate(-28deg)', transformOrigin: 'center' }}
@@ -640,7 +714,6 @@ export default function TitleBar() {
                   </span>
                 )}
               </button>
-
 
               {/* Mode horaire — indicateur seulement, plus cliquable */}
               <button
@@ -658,7 +731,6 @@ export default function TitleBar() {
               >
                 <span>🕑</span>
               </button>
-
             </>
           )}
         </div>
@@ -678,7 +750,6 @@ export default function TitleBar() {
             {fullTitle}
           </button>
         </div>
-
 
         {/* Droite — Contrôles */}
         <div className="flex items-center gap-2">
@@ -726,7 +797,9 @@ export default function TitleBar() {
               }}
               className="h-1.5 w-28 cursor-pointer appearance-none rounded-full bg-zinc-200 outline-none accent-blue-600 dark:bg-zinc-700"
             />
-            <span className="w-9 tabular-nums text-[11px] text-right opacity-60">{brightnessPct}%</span>
+            <span className="w-9 tabular-nums text-[11px] text-right opacity-60">
+              {brightnessPct}%
+            </span>
           </div>
 
           {/* Importer PDF / modes */}
@@ -782,6 +855,43 @@ export default function TitleBar() {
             {pdfMode === 'red' && <span className="font-bold">MODE SECOURS</span>}
           </button>
 
+          {/* Bouton de test en ligne (log entre début/fin) */}
+          <button
+            type="button"
+            onClick={() => {
+              if (!testRecording) {
+                // Démarrage d'une nouvelle session de test
+                const labelParts: string[] = []
+                if (trainDisplay) labelParts.push(`train_${trainDisplay}`)
+                labelParts.push(`mode_${pdfMode}`)
+                const label = labelParts.join('_')
+
+                startTestSession(label)
+                logTestEvent('ui:test:start', {
+                  train: trainDisplay ?? null,
+                  pdfMode,
+                })
+                setTestRecording(true)
+              } else {
+                // Fin de test + export du fichier .log
+                logTestEvent('ui:test:stop', {})
+                stopTestSession()
+                setTestRecording(false)
+                const exported = exportTestLog()
+                if (!exported) {
+                  alert('Aucun événement de test à exporter.')
+                }
+              }
+            }}
+            className={
+              testRecording
+                ? 'h-8 px-3 text-xs rounded-md bg-red-500 text-white font-semibold'
+                : 'h-8 px-3 text-xs rounded-md bg-zinc-200 text-zinc-800 dark:bg-zinc-700 dark:text-zinc-100'
+            }
+          >
+            {testRecording ? 'Fin du test' : 'Début du test'}
+          </button>
+
           <input
             ref={inputRef}
             type="file"
@@ -791,8 +901,6 @@ export default function TitleBar() {
           />
         </div>
       </div>
-
-
     </header>
   )
 }
