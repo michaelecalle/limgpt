@@ -396,19 +396,13 @@ export default function FT({ variant = "classic" }: FTProps) {
     React.useRef<{ realMin: number; firstHoraMin: number; fixedDelay: number } | null>(null);
   // Ligne cible pour un recalage manuel (mode Standby)
   const recalibrateFromRowRef = React.useRef<number | null>(null);
-    const autoScrollBaseRef =
-    React.useRef<{ realMin: number; firstHoraMin: number; fixedDelay: number } | null>(null);
-  // Ligne cible pour un recalage manuel (mode Standby)
-  const recalibrateFromRowRef = React.useRef<number | null>(null);
   // Dernière ligne FT utilisée comme “point d’ancrage” GPS
   const lastAnchoredRowRef = React.useRef<number | null>(null);
   // Premier démarrage déjà “consommé” ?
   const initialStandbyDoneRef = React.useRef(false);
-
-  // Premier démarrage déjà “consommé” ?
-  const initialStandbyDoneRef = React.useRef(false);
   // Index de la première ligne principale non-noteOnly (tenu à jour plus bas)
   const firstNonNoteIndexRef = React.useRef<number | null>(null);
+
 
   // Référence vers le conteneur scrollable de FTScrolling
   const scrollContainerRef = React.useRef<HTMLDivElement | null>(null);
