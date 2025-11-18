@@ -272,11 +272,20 @@ export default function TitleBar() {
   useEffect(() => {
     const handler = (e: Event) => {
       const ce = e as CustomEvent
-      const text = ce?.detail?.text as string | null | undefined
+      const rawText = ce?.detail?.text as string | null | undefined
       const isLarge = !!ce?.detail?.isLargeDelay
 
-      if (text && text.trim().length > 0) {
-        setScheduleDelta(text.trim())
+      const text =
+        rawText && rawText.trim().length > 0 ? rawText.trim() : null
+
+      // log labo : ce que la TitleBar reçoit et ce qu'elle va afficher
+      logTestEvent('ui:schedule-delta', {
+        text,
+        isLarge,
+      })
+
+      if (text) {
+        setScheduleDelta(text)
         setScheduleDeltaIsLarge(isLarge)
       } else {
         // si on envoie texte vide ou null -> on efface
@@ -290,6 +299,7 @@ export default function TitleBar() {
       window.removeEventListener('lim:schedule-delta', handler as EventListener)
     }
   }, [])
+
 
   // écoute le mode horaire envoyé par FT
   useEffect(() => {

@@ -135,9 +135,23 @@ export default function FT({ variant = "classic" }: FTProps) {
     );
     console.log("[FT][visible-rows] first=", firstVisible, "last=", lastVisible);
 
+    // log labo
+    logTestEvent("ft:scroll:viewport", {
+      scrollTop,
+      clientHeight,
+      rowCount: rowEls.length,
+      firstVisible,
+      lastVisible,
+      autoScrollEnabled,
+      referenceMode: referenceModeRef.current,
+      isManualScroll: isManualScrollRef.current,
+      isProgrammaticScroll: isProgrammaticScrollRef.current,
+    });
+
     // on met à jour le state
     setVisibleRows({ first: firstVisible, last: lastVisible });
   };
+
 
   //
   // ===== 1. NUMÉRO DE TRAIN ET PORTION DE PARCOURS ===================
@@ -381,8 +395,12 @@ export default function FT({ variant = "classic" }: FTProps) {
     autoScrollEnabledRef.current = autoScrollEnabled;
   }, [autoScrollEnabled]);
 
-    useEffect(() => {
+  useEffect(() => {
     console.log("[FT][mode] referenceMode changé =>", referenceMode);
+
+    logTestEvent("ft:reference-mode", {
+      mode: referenceMode,
+    });
 
     window.dispatchEvent(
       new CustomEvent("lim:reference-mode", {
@@ -390,6 +408,7 @@ export default function FT({ variant = "classic" }: FTProps) {
       })
     );
   }, [referenceMode]);
+
 
 
   const autoScrollBaseRef =
@@ -705,8 +724,17 @@ export default function FT({ variant = "classic" }: FTProps) {
         )} | diff (minutes depuis activation) = ${elapsed} | heure EFFECTIVE utilisée pour le '>' = ${effectiveHHMM}`
       );
 
+      logTestEvent("ft:delta:tick", {
+        nowHHMM: minutesToHHMM(nowMin),
+        baseFirstHoraHHMM: minutesToHHMM(base.firstHoraMin),
+        elapsedMinutes: elapsed,
+        effectiveHHMM,
+        fixedDelay: base.fixedDelay ?? null,
+      });
+
       // 🔁 PAUSE AUTOMATIQUE SUR HEURE D’ARRIVÉE
       if (referenceModeRef.current === "HORAIRE") {
+
         const arrivalList = arrivalEventsRef.current || [];
         if (Array.isArray(arrivalList) && arrivalList.length > 0) {
           const matchingArrival = arrivalList.find(
@@ -721,8 +749,15 @@ export default function FT({ variant = "classic" }: FTProps) {
               matchingArrival.arrivalMin
             );
 
+            logTestEvent("ft:auto:arrival-stop", {
+              rowIndex: matchingArrival.rowIndex,
+              arrivalMin: matchingArrival.arrivalMin,
+              effectiveHHMM,
+            });
+
             // On place la ligne active et la sélection sur cette arrivée
             setActiveRowIndex(matchingArrival.rowIndex);
+
             setSelectedRowIndex(matchingArrival.rowIndex);
             recalibrateFromRowRef.current = matchingArrival.rowIndex;
 
@@ -1362,21 +1397,35 @@ export default function FT({ variant = "classic" }: FTProps) {
                   })
                 );
 
+                const nowHHMM =
+                  now.getHours().toString().padStart(2, "0") +
+                  ":" +
+                  now.getMinutes().toString().padStart(2, "0");
+
                 console.log(
                   "[FT][gps] Recalage horaire via GPS — hora=",
                   horaText,
                   " (",
                   horaMinutes,
                   "min ) / now=",
-                  now.getHours().toString().padStart(2, "0") +
-                    ":" +
-                    now.getMinutes().toString().padStart(2, "0"),
+                  nowHHMM,
                   " => delta=",
                   fixedDelay,
                   "min (ligne index=",
                   idx,
                   ")"
                 );
+
+                logTestEvent("ft:delta:gps-recalage", {
+                  rowIndex: idx,
+                  hora: horaText,
+                  horaMinutes,
+                  nowHHMM,
+                  fixedDelay,
+                  pk: entry?.pk ?? null,
+                  dependencia: entry?.dependencia ?? null,
+                });
+
               } else {
                 console.warn(
                   "[FT][gps] Impossible de parser l'heure pour recalage via GPS:",
