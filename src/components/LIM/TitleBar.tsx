@@ -40,6 +40,9 @@ export default function TitleBar() {
   const [autoScroll, setAutoScroll] = useState(false)
   const [gpsState, setGpsState] = useState<0 | 1 | 2>(0)
   const [hourlyMode, setHourlyMode] = useState(false)
+  const [referenceMode, setReferenceMode] = useState<'HORAIRE' | 'GPS'>(
+    'HORAIRE'
+  )
   const [standbyMode, setStandbyMode] = useState(false)
   const [pdfMode, setPdfMode] = useState<'blue' | 'green' | 'red'>('blue')
   const [testRecording, setTestRecording] = useState(false)
@@ -61,8 +64,17 @@ export default function TitleBar() {
     dist_m?: number | null
   } | null>(null)
 
+  // Seuils de "fraîcheur" du GPS (utilisés dans les étapes suivantes)
+  const GPS_FRESH_TIMEOUT_MS = 30_000 // > 30 s sans nouvelle position → GPS considéré "pas frais"
+  const GPS_FROZEN_SKM_EPS = 0.005 // variation minimale de s_km pour considérer qu'on progresse
+
+  // Mémoire de la dernière mise à jour GPS (pour détecter une position figée)
+  const lastGpsUpdateRef = useRef<number | null>(null)
+  const lastGpsSkmRef = useRef<number | null>(null)
+
   // Texte affiché dans le badge GPS quand on est calé sur la ligne (PK estimé)
   const [gpsPkDisplay, setGpsPkDisplay] = useState<string | null>(null)
+
 
   useEffect(() => {
     window.dispatchEvent(
@@ -300,6 +312,23 @@ export default function TitleBar() {
     }
   }, [])
 
+    // écoute le mode de référence (HORAIRE / GPS) envoyé par FT
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const ce = e as CustomEvent
+      const mode = ce?.detail?.mode as 'HORAIRE' | 'GPS' | undefined
+
+      if (mode === 'HORAIRE' || mode === 'GPS') {
+        setReferenceMode(mode)
+      }
+    }
+
+    window.addEventListener('lim:reference-mode', handler as EventListener)
+    return () => {
+      window.removeEventListener('lim:reference-mode', handler as EventListener)
+    }
+  }, [])
+
   // synchronise le bouton Play/Pause + état horaire/standby si FT change le mode auto-scroll
   useEffect(() => {
     const handler = (e: Event) => {
@@ -344,6 +373,21 @@ export default function TitleBar() {
         return
       }
 
+      // 💾 mémorisation d'une position GPS "valide" (pour la fraîcheur)
+      const ts =
+        typeof (detail as any).timestamp === 'number'
+          ? (detail as any).timestamp
+          : Date.now()
+      lastGpsUpdateRef.current = ts
+
+      const sKmRaw = (detail as any).s_km as number | string | null | undefined
+      if (sKmRaw != null) {
+        const sVal = typeof sKmRaw === 'number' ? sKmRaw : Number(sKmRaw)
+        if (Number.isFinite(sVal)) {
+          lastGpsSkmRef.current = sVal
+        }
+      }
+
       // fix présent : vert si calé sur la ligne, orange sinon
       setGpsState(onLine ? 2 : 1)
 
@@ -363,6 +407,72 @@ export default function TitleBar() {
     window.addEventListener('gps:position', handler as EventListener)
     return () => {
       window.removeEventListener('gps:position', handler as EventListener)
+    }
+  }, [])
+  // Surcouche : GPS vert uniquement si la position est « fraîche »
+  useEffect(() => {
+    // Variables fermées sur l'effet : pas de nouveau hook
+    let lastFixTs: number | null = null
+    let lastHasFix = false
+    let lastOnLine = false
+
+    const GPS_FRESH_TIMEOUT_MS = 15_000
+    const GPS_STALE_TIMEOUT_MS = 60_000
+
+    const handler = (e: Event) => {
+      const ce = e as CustomEvent<any>
+      const detail = ce.detail || {}
+
+      const hasFix =
+        typeof (detail as any).lat === 'number' &&
+        typeof (detail as any).lon === 'number'
+      const onLine = !!(detail as any).onLine
+
+      const ts =
+        typeof (detail as any).timestamp === 'number'
+          ? (detail as any).timestamp
+          : Date.now()
+
+      if (!hasFix) {
+        // Pas de fix → on note juste l'absence de signal
+        lastHasFix = false
+        lastOnLine = false
+        return
+      }
+
+      lastHasFix = true
+      lastOnLine = onLine
+      lastFixTs = ts
+    }
+
+    window.addEventListener('gps:position', handler as EventListener)
+
+    const intervalId = window.setInterval(() => {
+      if (!lastHasFix || !lastFixTs) {
+        // Aucun fix récent connu → rouge + on efface le PK
+        setGpsState(0)
+        setGpsPkDisplay(null)
+        return
+      }
+
+      const age = Date.now() - lastFixTs
+
+      if (age <= GPS_FRESH_TIMEOUT_MS && lastOnLine) {
+        // Fix récent et calé sur la ligne → vert
+        setGpsState(2)
+      } else if (age <= GPS_STALE_TIMEOUT_MS) {
+        // Position un peu ancienne → orange
+        setGpsState(1)
+      } else {
+        // Trop ancien → rouge + on efface le PK
+        setGpsState(0)
+        setGpsPkDisplay(null)
+      }
+    }, 1000)
+
+    return () => {
+      window.removeEventListener('gps:position', handler as EventListener)
+      window.clearInterval(intervalId)
     }
   }, [])
 
@@ -720,17 +830,20 @@ export default function TitleBar() {
                 type="button"
                 className={`h-7 w-7 rounded-full flex items-center justify-center text-[12px] bg-white dark:bg-zinc-900 transition cursor-default
                   ${
-                    standbyMode
-                      ? 'border-[3px] border-orange-400 text-orange-500 dark:text-orange-300'
-                      : autoScroll
-                        ? 'border-[3px] border-emerald-400 text-emerald-500 dark:text-emerald-300'
-                        : 'border-[3px] border-red-500 text-red-500 dark:text-red-400'
+                    referenceMode === 'GPS'
+                      ? 'border-[3px] border-zinc-400 text-zinc-500 dark:border-zinc-500 dark:text-zinc-300'
+                      : standbyMode
+                        ? 'border-[3px] border-orange-400 text-orange-500 dark:text-orange-300'
+                        : autoScroll
+                          ? 'border-[3px] border-emerald-400 text-emerald-500 dark:text-emerald-300'
+                          : 'border-[3px] border-red-500 text-red-500 dark:text-red-400'
                   }
                 `}
-                aria-pressed={hourlyMode}
+                aria-pressed={referenceMode === 'HORAIRE' && hourlyMode}
               >
                 <span>🕑</span>
               </button>
+
             </>
           )}
         </div>

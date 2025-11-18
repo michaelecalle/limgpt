@@ -8,6 +8,8 @@ import {
   type FTEntry,
   type CsvSens,
 } from "../../data/ligneFT";
+import { logTestEvent } from "../../lib/testLogger";
+
 
 type GpsPosition = {
   lat: number;
@@ -394,6 +396,15 @@ export default function FT({ variant = "classic" }: FTProps) {
     React.useRef<{ realMin: number; firstHoraMin: number; fixedDelay: number } | null>(null);
   // Ligne cible pour un recalage manuel (mode Standby)
   const recalibrateFromRowRef = React.useRef<number | null>(null);
+    const autoScrollBaseRef =
+    React.useRef<{ realMin: number; firstHoraMin: number; fixedDelay: number } | null>(null);
+  // Ligne cible pour un recalage manuel (mode Standby)
+  const recalibrateFromRowRef = React.useRef<number | null>(null);
+  // Dernière ligne FT utilisée comme “point d’ancrage” GPS
+  const lastAnchoredRowRef = React.useRef<number | null>(null);
+  // Premier démarrage déjà “consommé” ?
+  const initialStandbyDoneRef = React.useRef(false);
+
   // Premier démarrage déjà “consommé” ?
   const initialStandbyDoneRef = React.useRef(false);
   // Index de la première ligne principale non-noteOnly (tenu à jour plus bas)
@@ -404,6 +415,14 @@ export default function FT({ variant = "classic" }: FTProps) {
 
     // Dernière position GPS reçue (mémorisée pour les futurs calculs)
   const lastGpsPositionRef = React.useRef<GpsPosition | null>(null);
+
+    const ORANGE_TIMEOUT_MS = 60_000;
+
+  // État "GPS OK" (fix + sur la ligne) pour l'hystérésis
+  const gpsHealthyRef = React.useRef<boolean>(false);
+
+  // Timer en cours pour le passage différé en mode HORAIRE
+  const orangeTimeoutRef = React.useRef<number | null>(null);
 
   // Suivi du scroll manuel pendant que le mode horaire est actif
   const isManualScrollRef = React.useRef(false);
@@ -693,7 +712,7 @@ export default function FT({ variant = "classic" }: FTProps) {
       );
 
       // 🔁 PAUSE AUTOMATIQUE SUR HEURE D’ARRIVÉE
-      if (referenceMode === "HORAIRE") {
+      if (referenceModeRef.current === "HORAIRE") {
         const arrivalList = arrivalEventsRef.current || [];
         if (Array.isArray(arrivalList) && arrivalList.length > 0) {
           const matchingArrival = arrivalList.find(
@@ -808,7 +827,7 @@ export default function FT({ variant = "classic" }: FTProps) {
       const dataIndex = dataIndexAttr ? parseInt(dataIndexAttr, 10) : domIndex;
 
       // 👉 Le moteur horaire ne pilote la ligne active que si on est en mode HORAIRE
-      if (referenceMode === "HORAIRE") {
+      if (referenceModeRef.current === "HORAIRE") {
         setActiveRowIndex(dataIndex);
       }
 
@@ -851,7 +870,8 @@ export default function FT({ variant = "classic" }: FTProps) {
         handleForceTime as EventListener
       );
     };
-  }, [autoScrollEnabled, referenceMode]);
+  }, [autoScrollEnabled]);
+
 
 
 
@@ -1212,28 +1232,67 @@ export default function FT({ variant = "classic" }: FTProps) {
 
       const pk = (detail as any).pk as number | null | undefined;
 
-      // --- Mise à jour du mode de référence (HORAIRE / GPS) ---
+      // --- Hystérésis sur le mode de référence (HORAIRE / GPS) ---
       const hasGpsFix =
         typeof (detail as any).lat === "number" &&
         typeof (detail as any).lon === "number";
 
       const onLine = !!(detail as any).onLine;
+      const isHealthy = hasGpsFix && onLine;
 
-      let nextMode: ReferenceMode = referenceMode;
+      // On met à jour l'état "GPS OK" pour les callbacks différés
+      gpsHealthyRef.current = isHealthy;
 
-      if (hasGpsFix && onLine) {
-        // GPS valide ET position projetée sur la ligne
-        nextMode = "GPS";
+      if (isHealthy) {
+        // GPS valide ET position sur la ligne : on annule tout passage différé en horaire
+        if (orangeTimeoutRef.current !== null) {
+          window.clearTimeout(orangeTimeoutRef.current);
+          orangeTimeoutRef.current = null;
+          console.log(
+            "[FT][gps] Signal revenu avant 60 s -> annulation du passage en mode HORAIRE"
+          );
+        }
+
+        if (referenceModeRef.current !== "GPS") {
+          console.log("[FT][gps] Passage en mode GPS (signal OK, onLine = true)");
+          setReferenceMode("GPS");
+        }
       } else {
-        // soit pas de fix GPS, soit fix mais pas projetable sur la ligne
-        nextMode = "HORAIRE";
+        // Signal dégradé : pas de fix ou position hors de la bande LAV
+        if (referenceModeRef.current === "GPS") {
+          // On ne bascule pas tout de suite en HORAIRE : on démarre un timer si ce n'est pas déjà fait
+          if (orangeTimeoutRef.current === null) {
+            console.log(
+              "[FT][gps] Signal dégradé -> démarrage de l'hystérésis (60 s avant mode HORAIRE)"
+            );
+            const timeoutId = window.setTimeout(() => {
+              // Au bout de 60 s, on ne bascule en HORAIRE que si :
+              //  - le signal n'est toujours pas redevenu "healthy"
+              //  - et on est toujours officiellement en mode GPS
+              if (!gpsHealthyRef.current && referenceModeRef.current === "GPS") {
+                console.log(
+                  "[FT][gps] Hystérésis écoulée (>= 60 s en signal dégradé) -> passage en mode HORAIRE"
+                );
+                setReferenceMode("HORAIRE");
+              } else {
+                console.log(
+                  "[FT][gps] Hystérésis expirée mais signal redevenu OK ou mode déjà changé -> pas de bascule"
+                );
+              }
+              orangeTimeoutRef.current = null;
+            }, ORANGE_TIMEOUT_MS);
+            orangeTimeoutRef.current = timeoutId;
+          }
+        } else {
+          // On est déjà en mode HORAIRE : on s'assure simplement qu'aucun timer ne traîne
+          if (orangeTimeoutRef.current !== null) {
+            window.clearTimeout(orangeTimeoutRef.current);
+            orangeTimeoutRef.current = null;
+          }
+        }
       }
 
-      if (nextMode !== referenceMode) {
-        console.log("[FT][gps] Changement de mode de référence =>", nextMode);
-        setReferenceMode(nextMode);
-      }
-
+      // --- Suite : projection PK -> ligne FT + recalage horaire (inchangé dans l'esprit) ---
       if (pk != null) {
         const idx = findRowIndexFromPk(pk);
         if (idx != null) {
@@ -1250,9 +1309,23 @@ export default function FT({ variant = "classic" }: FTProps) {
           );
 
           // 🧭 En mode GPS calé sur la ligne → la ligne active est pilotée par le PK
-          if (hasGpsFix && onLine && nextMode === "GPS") {
+          const currentRefMode = referenceModeRef.current;
+
+          if (hasGpsFix && onLine && currentRefMode === "GPS") {
             // Ligne active = ligne GPS (PK projeté)
             setActiveRowIndex(idx);
+
+            // 📌 On ne recalcule le delta qu'au passage à un *nouveau* point d'ancrage
+            const lastIdx = lastAnchoredRowRef.current;
+            const isNewAnchor = lastIdx == null || lastIdx !== idx;
+
+            if (!isNewAnchor) {
+              // même ligne FT que la dernière ancre GPS → pas de recalage horaire
+              return;
+            }
+
+            // On mémorise cette ligne comme nouveau point d'ancrage GPS
+            lastAnchoredRowRef.current = idx;
 
             // On récupère l'heure "effectivement utilisée" pour cette ligne :
             // - soit hora de la FT brute
@@ -1322,6 +1395,7 @@ export default function FT({ variant = "classic" }: FTProps) {
               );
             }
           }
+
         } else {
           console.log(
             "[FT][gps] pk≈",
@@ -1335,8 +1409,14 @@ export default function FT({ variant = "classic" }: FTProps) {
     window.addEventListener("gps:position", handler as EventListener);
     return () => {
       window.removeEventListener("gps:position", handler as EventListener);
+      // On nettoie aussi le timer d'hystérésis au démontage
+      if (orangeTimeoutRef.current !== null) {
+        window.clearTimeout(orangeTimeoutRef.current);
+        orangeTimeoutRef.current = null;
+      }
     };
   }, [rawEntries, referenceMode, heuresDetectees]);
+
 
 
   //
