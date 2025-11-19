@@ -12,20 +12,21 @@ export type AnchorPkS = {
 export const ANCRES_PK_S: AnchorPkS[] = [
   {
     pk: 752.4,
-    s_km: 290.040,
+    s_km: 289.606,
     lat: 42.2941984,
     lon: 2.9302603,
-    index_ruban: 1100,
+    index_ruban: 1099,
     label: 'LIMITE ADIF-LFPSA',
   },
   {
     pk: 748.9,
-    s_km: 286.707,
+    s_km: 286.273,
     lat: 42.2645806,
     lon: 2.9430284,
-    index_ruban: 1089,
+    index_ruban: 1088,
     label: 'FIGUERES-VILAFANT',
   },
+
   {
     pk: 714.7,
     s_km: 206.507,

@@ -10,7 +10,6 @@ import {
 } from "../../data/ligneFT";
 import { logTestEvent } from "../../lib/testLogger";
 
-
 type GpsPosition = {
   lat: number;
   lon: number;
@@ -28,7 +27,6 @@ type FTProps = {
   variant?: "classic" | "modern";
 };
 
-
 export default function FT({ variant = "classic" }: FTProps) {
   const [visibleRows, setVisibleRows] = React.useState<{ first: number; last: number }>({
     first: 0,
@@ -43,12 +41,11 @@ export default function FT({ variant = "classic" }: FTProps) {
   // ligne actuellement sélectionnée pour le recalage manuel
   const [selectedRowIndex, setSelectedRowIndex] = useState<number | null>(null);
 
-
   const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
-  const el = e.currentTarget;
-  scrollContainerRef.current = el;
+    const el = e.currentTarget;
+    scrollContainerRef.current = el;
 
-  const scrollTop = el.scrollTop;
+    const scrollTop = el.scrollTop;
 
     const clientHeight = el.clientHeight;
 
@@ -152,7 +149,6 @@ export default function FT({ variant = "classic" }: FTProps) {
     setVisibleRows({ first: firstVisible, last: lastVisible });
   };
 
-
   //
   // ===== 1. NUMÉRO DE TRAIN ET PORTION DE PARCOURS ===================
   //
@@ -182,7 +178,6 @@ export default function FT({ variant = "classic" }: FTProps) {
   const arrivalEventsRef = React.useRef<
     { arrivalMin: number; rowIndex: number }[]
   >([]);
-
 
   // -- écoute du numéro de train
   useEffect(() => {
@@ -409,8 +404,6 @@ export default function FT({ variant = "classic" }: FTProps) {
     );
   }, [referenceMode]);
 
-
-
   const autoScrollBaseRef =
     React.useRef<{ realMin: number; firstHoraMin: number; fixedDelay: number } | null>(null);
   // Ligne cible pour un recalage manuel (mode Standby)
@@ -422,14 +415,23 @@ export default function FT({ variant = "classic" }: FTProps) {
   // Index de la première ligne principale non-noteOnly (tenu à jour plus bas)
   const firstNonNoteIndexRef = React.useRef<number | null>(null);
 
+  // Lorsque le mode de référence repasse en GPS, on nettoie toute sélection Standby / recalage manuel
+  useEffect(() => {
+    if (referenceMode !== "GPS") return;
+
+    if (selectedRowIndex !== null) {
+      setSelectedRowIndex(null);
+    }
+    recalibrateFromRowRef.current = null;
+  }, [referenceMode, selectedRowIndex]);
 
   // Référence vers le conteneur scrollable de FTScrolling
   const scrollContainerRef = React.useRef<HTMLDivElement | null>(null);
 
-    // Dernière position GPS reçue (mémorisée pour les futurs calculs)
+  // Dernière position GPS reçue (mémorisée pour les futurs calculs)
   const lastGpsPositionRef = React.useRef<GpsPosition | null>(null);
 
-    const ORANGE_TIMEOUT_MS = 60_000;
+  const ORANGE_TIMEOUT_MS = 60_000;
 
   // État "GPS OK" (fix + sur la ligne) pour l'hystérésis
   const gpsHealthyRef = React.useRef<boolean>(false);
@@ -443,7 +445,7 @@ export default function FT({ variant = "classic" }: FTProps) {
   const lastAutoScrollTopRef = React.useRef<number | null>(null);
   const isProgrammaticScrollRef = React.useRef(false);
 
-   useEffect(() => {
+  useEffect(() => {
     function handlerAutoScroll(e: any) {
       const detail = e?.detail ?? {};
       const enabled = !!detail.enabled;
@@ -509,7 +511,6 @@ export default function FT({ variant = "classic" }: FTProps) {
       );
     };
   }, []);
-
 
   // quand le mode auto-scroll (play) s'allume/s'éteint
   useEffect(() => {
@@ -734,7 +735,6 @@ export default function FT({ variant = "classic" }: FTProps) {
 
       // 🔁 PAUSE AUTOMATIQUE SUR HEURE D’ARRIVÉE
       if (referenceModeRef.current === "HORAIRE") {
-
         const arrivalList = arrivalEventsRef.current || [];
         if (Array.isArray(arrivalList) && arrivalList.length > 0) {
           const matchingArrival = arrivalList.find(
@@ -901,9 +901,6 @@ export default function FT({ variant = "classic" }: FTProps) {
     };
   }, [autoScrollEnabled]);
 
-
-
-
   // avance auto de la ligne active tant qu'on est en play :
   // on ajuste le scroll pour rapprocher la ligne active de la ligne rouge
   // (on autorise désormais le scroll à monter OU descendre),
@@ -963,7 +960,6 @@ export default function FT({ variant = "classic" }: FTProps) {
     });
     lastAutoScrollTopRef.current = targetScrollTop;
   }, [autoScrollEnabled, activeRowIndex, referenceMode]);
-
 
   //
   // ===== 2. LOGIQUE MÉTIER DE SENS ===================================
@@ -1131,7 +1127,7 @@ export default function FT({ variant = "classic" }: FTProps) {
   }, [isOdd, trainNumber, routeStart, routeEnd]);
 
   // Trouve l'index de la ligne FT correspondant au PK GPS,
-  // en prenant la première ligne "en aval" dans le sens du parcours.
+  // en prenant la dernière ligne "atteinte" (en amont) dans le sens du parcours.
   function findRowIndexFromPk(targetPk: number | null): number | null {
     if (targetPk == null || !Number.isFinite(targetPk)) return null;
 
@@ -1165,32 +1161,31 @@ export default function FT({ variant = "classic" }: FTProps) {
     let candidateIndex: number | null = null;
 
     if (ascending) {
-      // PK croissants : première ligne avec PK >= PK GPS
-      for (let i = 0; i < rawEntries.length; i++) {
-        const e = rawEntries[i];
-        if (e.isNoteOnly || !e.pk) continue;
-        const pkNum = Number(e.pk);
-        if (!Number.isFinite(pkNum)) continue;
-        if (pkNum >= targetPk) {
-          candidateIndex = i;
-          break;
-        }
-      }
-    } else {
-      // PK décroissants : première ligne avec PK <= PK GPS
+      // PK croissants : on prend la DERNIÈRE ligne avec PK <= PK GPS (déjà atteinte)
       for (let i = 0; i < rawEntries.length; i++) {
         const e = rawEntries[i];
         if (e.isNoteOnly || !e.pk) continue;
         const pkNum = Number(e.pk);
         if (!Number.isFinite(pkNum)) continue;
         if (pkNum <= targetPk) {
-          candidateIndex = i;
-          break;
+          candidateIndex = i; // on garde la plus récente "en amont"
+        }
+      }
+    } else {
+      // PK décroissants : on prend la DERNIÈRE ligne avec PK >= PK GPS (déjà atteinte)
+      for (let i = 0; i < rawEntries.length; i++) {
+        const e = rawEntries[i];
+        if (e.isNoteOnly || !e.pk) continue;
+        const pkNum = Number(e.pk);
+        if (!Number.isFinite(pkNum)) continue;
+        if (pkNum >= targetPk) {
+          candidateIndex = i; // idem, la plus récente "en amont"
         }
       }
     }
 
-    // Si on n'a rien trouvé "en aval", on retombe sur la plus proche
+    // Si on n'a rien trouvé "en amont" (PK GPS avant le début ou après la fin),
+    // on retombe sur la ligne la plus proche.
     if (candidateIndex == null) {
       let bestIndex: number | null = null;
       let bestDelta = Number.POSITIVE_INFINITY;
@@ -1214,6 +1209,7 @@ export default function FT({ variant = "classic" }: FTProps) {
 
     return candidateIndex;
   }
+
   function resolveHoraForRowIndex(rowIndex: number): string {
     const entry = rawEntries[rowIndex];
     if (!entry) return "";
@@ -1459,8 +1455,6 @@ export default function FT({ variant = "classic" }: FTProps) {
       }
     };
   }, [rawEntries, referenceMode, heuresDetectees]);
-
-
 
   //
   // ===== 4. HELPERS REMARQUES ROUGES =================================
@@ -1887,8 +1881,12 @@ export default function FT({ variant = "classic" }: FTProps) {
 
   // Gestion des clics sur le corps de la FT :
   // - 1er clic en mode horaire : sélection de la ligne la plus proche => Standby
-  // - 2ᵉ clic en Standby : relance du mode horaire depuis la ligne sélectionnée
+  // - 2ᵉ clic en Standby : relance du mode horaire
   const handleBodyClick = (e: React.MouseEvent<HTMLDivElement>) => {
+    // En mode GPS, le clic sur la fiche train ne doit jamais déclencher Standby / recalage
+    if (referenceModeRef.current === "GPS") {
+      return;
+    }
 
     const container = e.currentTarget;
     const clickY = e.clientY;
@@ -2077,7 +2075,6 @@ export default function FT({ variant = "classic" }: FTProps) {
         });
       }
     }
-
 
     const prevHoraStr = previousHoraForConc;
     const currentHoraStr = hora;
@@ -2382,6 +2379,11 @@ export default function FT({ variant = "classic" }: FTProps) {
         key={`main-${i}`}
         data-ft-row={i}
         onClick={() => {
+          // En mode GPS, le clic sur une ligne est inopérant (pas de Standby / recalage)
+          if (referenceModeRef.current === "GPS") {
+            return;
+          }
+
           // on ne sélectionne que les lignes qui ont bien une dependencia et une heure
           if (!hora || !depNorm) return;
 
@@ -2483,7 +2485,6 @@ export default function FT({ variant = "classic" }: FTProps) {
             );
           })()}
         </td>
-
 
         {/* Dependencia (surlignable) */}
         <td
