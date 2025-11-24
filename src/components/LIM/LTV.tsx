@@ -45,13 +45,19 @@ type LTVEventDetail = {
   previewImageDataUrl?: string
   altPreviewImageDataUrl?: string
   rows?: LtvRow[]
+  nativeImages?: {
+    width: number
+    height: number
+    dataUrl: string
+  }[]
 }
+
 
 const LTV: React.FC = () => {
   // --- état venant du parseur LTV (ltvParser.ts)
   const [ltvMode, setLtvMode] = useState<LTVMode | "">("")
 
-  // Deux candidates envoyées par le parseur en mode DISPLAY_DIRECT
+  // Deux candidates "historiques" envoyées par le parseur en mode DISPLAY_DIRECT
   const [previewImage, setPreviewImage] = useState<string | undefined>(
     undefined
   )
@@ -63,12 +69,18 @@ const LTV: React.FC = () => {
   // "main" = previewImageDataUrl, "alt" = altPreviewImageDataUrl
   const [selectedImage, setSelectedImage] = useState<"main" | "alt">("main")
 
+  // 🔢 Nouvelle API : liste d'images candidates (toutes les bitmaps utiles côté PDF)
+  // On ne les utilise pas encore dans le rendu, on se contente de les stocker.
+  const [candidateImages, setCandidateImages] = useState<string[]>([])
+  const [selectedImageIndex, setSelectedImageIndex] = useState(0)
+
   // Une fois validé par l'utilisateur → plus de bascule possible
   const [lockedDisplayDirect, setLockedDisplayDirect] =
     useState<boolean>(false)
 
   // lignes LTV structurées pour DISPLAY_DIRECT
   const [rows, setRows] = useState<LtvRow[]>([])
+
 
   // --- refs
   const previewImgRef = useRef<HTMLImageElement | null>(null)
@@ -129,6 +141,20 @@ const LTV: React.FC = () => {
         rows: incomingRows,
       })
 
+            const nativeImages = (ce.detail as any)?.nativeImages as
+        | { width: number; height: number; dataUrl: string }[]
+        | undefined
+
+      if (nativeImages && nativeImages.length > 0) {
+        console.log("[LTV] nativeImages reçues =", nativeImages.length)
+        setCandidateImages(nativeImages.map((img) => img.dataUrl))
+        setSelectedImageIndex(0)
+      } else {
+        setCandidateImages([])
+        setSelectedImageIndex(0)
+      }
+
+
       if (mode) setLtvMode(mode)
       setRows(incomingRows)
 
@@ -139,7 +165,24 @@ const LTV: React.FC = () => {
         setPreviewImage(imgMain || undefined)
         setAltPreviewImage(imgAlt || undefined)
 
-        // par défaut on affiche la principale
+        // 🔢 On récupère toutes les images natives envoyées par le parseur (si dispo)
+        const nativeImages =
+          ((ce.detail as any)?.nativeImages ?? []) as {
+            width: number
+            height: number
+            dataUrl: string
+          }[]
+
+        const images = nativeImages.map((img) => img.dataUrl)
+        setCandidateImages(images)
+        setSelectedImageIndex(0)
+
+        console.log("[LTV] DISPLAY_DIRECT nativeImages reçues =", {
+          total: nativeImages.length,
+          imagesCount: images.length,
+        })
+
+        // par défaut on affiche la principale (comportement inchangé)
         setSelectedImage("main")
         setFinalCroppedUrl(imgMain || null)
 
@@ -159,6 +202,7 @@ const LTV: React.FC = () => {
         setCropBox({ top: 20, bottom: 80, left: 10, right: 90 })
         return
       }
+
 
       // --- NEEDS_CROP : recadrage manuel ---
       if (mode === "NEEDS_CROP") {
@@ -181,6 +225,10 @@ const LTV: React.FC = () => {
         setDraggingEdge(null)
         setAnchorX(null)
         setAnchorY(null)
+
+        setCandidateImages([])
+        setSelectedImageIndex(0)
+
         return
       }
 
@@ -201,6 +249,10 @@ const LTV: React.FC = () => {
       setAnchorX(null)
       setAnchorY(null)
       setCropBox({ top: 20, bottom: 80, left: 10, right: 90 })
+
+      setCandidateImages([])
+      setSelectedImageIndex(0)
+
     }
 
     window.addEventListener("ltv:parsed", onLtvParsed as EventListener)
@@ -871,14 +923,14 @@ const LTV: React.FC = () => {
 
     // 4. Affichage direct d'une image fournie (DISPLAY_DIRECT)
     if (ltvMode === "DISPLAY_DIRECT" && finalCroppedUrl) {
-      // On peut basculer seulement si :
-      // - pas encore validé
-      // - il existe bien une alternative différente
-      const canToggle =
-        !lockedDisplayDirect &&
-        previewImage &&
-        altPreviewImage &&
-        altPreviewImage !== previewImage
+      const totalCandidates = candidateImages.length
+      const hasCandidates = totalCandidates > 0
+      const safeIndex =
+        hasCandidates && selectedImageIndex < totalCandidates
+          ? selectedImageIndex
+          : 0
+
+      const currentUrl = finalCroppedUrl
 
       return (
         <tbody className="ltv-body-final">
@@ -893,7 +945,7 @@ const LTV: React.FC = () => {
               }}
             >
               <img
-                src={finalCroppedUrl}
+                src={currentUrl || ""}
                 alt="LTV auto"
                 style={{
                   width: "100%",
@@ -903,10 +955,7 @@ const LTV: React.FC = () => {
                   borderRadius: "0",
                   boxShadow: "none",
                   backgroundColor: "transparent",
-                  cursor: canToggle ? "pointer" : "default",
-                }}
-                onClick={() => {
-                  if (canToggle) toggleDisplayDirectImage()
+                  cursor: "default",
                 }}
               />
 
@@ -922,29 +971,80 @@ const LTV: React.FC = () => {
                     flexWrap: "wrap",
                     padding: "8px 0 10px",
                     backgroundColor: "#fff",
+                    alignItems: "center",
                   }}
                 >
-                  {/* bouton basculer */}
-                  {canToggle && (
-                    <button
-                      style={{
-                        backgroundColor: "#1e3a8a",
-                        color: "#fff",
-                        fontSize: "13px",
-                        fontWeight: 600,
-                        borderRadius: "6px",
-                        padding: "6px 10px",
-                        border: "2px solid #000",
-                        boxShadow: "0 4px 8px rgba(0,0,0,0.4)",
-                        cursor: "pointer",
-                        minWidth: "110px",
-                        lineHeight: 1.2,
-                      }}
-                      onClick={toggleDisplayDirectImage}
-                    >
-                      Basculer{" "}
-                      {selectedImage === "main" ? "(→ alt)" : "(→ main)"}
-                    </button>
+                  {/* Navigation entre les différentes images candidates */}
+                  {hasCandidates && totalCandidates > 1 && (
+                    <>
+                      <button
+                        style={{
+                          backgroundColor: "#4b5563",
+                          color: "#fff",
+                          fontSize: "13px",
+                          fontWeight: 600,
+                          borderRadius: "6px",
+                          padding: "6px 10px",
+                          border: "2px solid #000",
+                          boxShadow: "0 4px 8px rgba(0,0,0,0.4)",
+                          cursor:
+                            safeIndex > 0 ? "pointer" : "not-allowed",
+                          minWidth: "80px",
+                          lineHeight: 1.2,
+                        }}
+                        disabled={safeIndex <= 0}
+                        onClick={() => {
+                          if (safeIndex <= 0) return
+                          const nextIndex = safeIndex - 1
+                          setSelectedImageIndex(nextIndex)
+                          const nextUrl =
+                            candidateImages[nextIndex] || currentUrl
+                          setFinalCroppedUrl(nextUrl || null)
+                        }}
+                      >
+                        ◀︎ Préc.
+                      </button>
+
+                      <span
+                        style={{
+                          fontSize: "13px",
+                          fontWeight: 600,
+                          minWidth: "110px",
+                        }}
+                      >
+                        Image {safeIndex + 1} / {totalCandidates}
+                      </span>
+
+                      <button
+                        style={{
+                          backgroundColor: "#4b5563",
+                          color: "#fff",
+                          fontSize: "13px",
+                          fontWeight: 600,
+                          borderRadius: "6px",
+                          padding: "6px 10px",
+                          border: "2px solid #000",
+                          boxShadow: "0 4px 8px rgba(0,0,0,0.4)",
+                          cursor:
+                            safeIndex < totalCandidates - 1
+                              ? "pointer"
+                              : "not-allowed",
+                          minWidth: "80px",
+                          lineHeight: 1.2,
+                        }}
+                        disabled={safeIndex >= totalCandidates - 1}
+                        onClick={() => {
+                          if (safeIndex >= totalCandidates - 1) return
+                          const nextIndex = safeIndex + 1
+                          setSelectedImageIndex(nextIndex)
+                          const nextUrl =
+                            candidateImages[nextIndex] || currentUrl
+                          setFinalCroppedUrl(nextUrl || null)
+                        }}
+                      >
+                        Suiv. ▶︎
+                      </button>
+                    </>
                   )}
 
                   {/* bouton valider */}
@@ -973,6 +1073,7 @@ const LTV: React.FC = () => {
         </tbody>
       )
     }
+
 
     // 5. fallback
     return (

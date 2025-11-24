@@ -38,6 +38,14 @@ export type LTVParseResult = {
   mode: LTVMode
   previewImageDataUrl?: string
   altPreviewImageDataUrl?: string
+
+  // Toutes les images bitmap extraites de la page (pour pouvoir les parcourir côté UI)
+  nativeImages?: {
+    width: number
+    height: number
+    dataUrl: string
+  }[]
+
   debugBands?: {
     dataUrl: string
     topPct: number
@@ -46,6 +54,7 @@ export type LTVParseResult = {
   }[]
   // rows?: ... (pour un futur OCR/texte)
 }
+
 
 // --- Heuristiques / normalisation texte ---
 
@@ -521,27 +530,29 @@ async function handleFileForLtv(file: File) {
         const extracted = await extractPageBitmapImages(firstPage)
 
         if (extracted && extracted.length > 0) {
+          // "Bande horizontale plausible" = largeur au moins 2× la hauteur
           const plausible = extracted.filter(
-            (img) => img.width >= 800 && img.height <= 200
+            (img) => img.width >= 2 * img.height
           )
 
+          // Liste exposée à l'UI :
+          // - si on a des bandes plausibles → seulement celles-là
+          // - sinon → toutes les images (fallback)
+          const nativeList =
+            plausible.length > 0 ? plausible : extracted
+
+          parsed.nativeImages = nativeList
+
           if (plausible.length > 0) {
-            const byHeightAsc = [...plausible].sort((a, b) => a.height - b.height)
+            // On trie les bandes plausibles par surface décroissante
+            const byAreaDesc = [...plausible].sort(
+              (a, b) => b.width * b.height - a.width * a.height
+            )
 
-            bestNativeUrl = byHeightAsc[0]?.dataUrl
-
-            if (byHeightAsc.length > 1) {
-              secondNativeUrl = byHeightAsc[1]?.dataUrl
-            } else {
-              const byAreaDesc = [...extracted].sort(
-                (a, b) => b.width * b.height - a.width * a.height
-              )
-              const biggestAreaUrl = byAreaDesc[0]?.dataUrl
-              if (biggestAreaUrl && biggestAreaUrl !== bestNativeUrl) {
-                secondNativeUrl = biggestAreaUrl
-              }
-            }
+            bestNativeUrl = byAreaDesc[0]?.dataUrl
+            secondNativeUrl = byAreaDesc[1]?.dataUrl
           } else {
+            // Pas de bande plausible → on retombe sur les plus grandes images globales
             const byAreaDesc = [...extracted].sort(
               (a, b) => b.width * b.height - a.width * a.height
             )
@@ -583,6 +594,7 @@ async function handleFileForLtv(file: File) {
         parsed.altPreviewImageDataUrl = bestDataUrl
       }
     } else if (c.mode === "NEEDS_CROP") {
+
       const { bestDataUrl, debugBands } = await buildDebugBandsForPage1(
         firstPage,
         "NEEDS_CROP"
