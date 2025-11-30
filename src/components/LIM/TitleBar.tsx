@@ -82,6 +82,16 @@ export default function TitleBar() {
     )
   }, [pdfMode])
 
+  // Diffusion du mode test (bouton "Début du test / Fin du test")
+  useEffect(() => {
+    window.dispatchEvent(
+      new CustomEvent('lim:test-mode', {
+        detail: { enabled: testRecording },
+      })
+    )
+  }, [testRecording])
+
+
   // ----- Initialisation du moteur GPS→PK -----
   useEffect(() => {
     let cancelled = false

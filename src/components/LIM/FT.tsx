@@ -41,6 +41,10 @@ export default function FT({ variant = "classic" }: FTProps) {
   // ligne actuellement sélectionnée pour le recalage manuel
   const [selectedRowIndex, setSelectedRowIndex] = useState<number | null>(null);
 
+  // mode test (active les overlays de debug FT)
+  const [testModeEnabled, setTestModeEnabled] = useState(false);
+
+
   const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
     const el = e.currentTarget;
     scrollContainerRef.current = el;
@@ -404,8 +408,22 @@ export default function FT({ variant = "classic" }: FTProps) {
     );
   }, [referenceMode]);
 
+  // écoute du mode test (ON/OFF)
+  useEffect(() => {
+    function handleTestMode(e: any) {
+      const enabled = !!e?.detail?.enabled;
+      setTestModeEnabled(enabled);
+    }
+
+    window.addEventListener("lim:test-mode", handleTestMode as EventListener);
+    return () => {
+      window.removeEventListener("lim:test-mode", handleTestMode as EventListener);
+    };
+  }, []);
+
   const autoScrollBaseRef =
     React.useRef<{ realMin: number; firstHoraMin: number; fixedDelay: number } | null>(null);
+
   // Ligne cible pour un recalage manuel (mode Standby)
   const recalibrateFromRowRef = React.useRef<number | null>(null);
   // Dernière ligne FT utilisée comme “point d’ancrage” GPS
@@ -2467,7 +2485,8 @@ export default function FT({ variant = "classic" }: FTProps) {
           }
         >
           {(() => {
-            const isActive = autoScrollEnabled && i === activeRowIndex;
+            const isActive =
+              testModeEnabled && autoScrollEnabled && i === activeRowIndex;
 
             if (!isActive) {
               return sitKm;
@@ -2485,6 +2504,7 @@ export default function FT({ variant = "classic" }: FTProps) {
             );
           })()}
         </td>
+
 
         {/* Dependencia (surlignable) */}
         <td
@@ -3203,10 +3223,11 @@ export default function FT({ variant = "classic" }: FTProps) {
             </table>
 
             {/* overlay de repère à 1/3 de la hauteur visible */}
-            <div className="ft-active-line"></div>
+            {testModeEnabled && <div className="ft-active-line"></div>}
           </div>
         </FTScrolling>
       </div>
     </section>
   );
 }
+
