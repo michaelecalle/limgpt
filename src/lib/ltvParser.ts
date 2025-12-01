@@ -30,6 +30,10 @@ import workerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url"
 
 ;(pdfjsLib as any).GlobalWorkerOptions.workerSrc = workerUrl
 
+// Dernier PDF et page 1 utilisés pour LTV (pour les demandes de bandes dynamiques)
+let lastPdfForLtv: PDFDocumentProxy | null = null
+let lastPage1ForLtv: PDFPageProxy | null = null
+
 // --- Types publics ---
 
 export type LTVMode = "DISPLAY_DIRECT" | "NEEDS_CROP" | "NO_LTV"
@@ -285,16 +289,14 @@ async function buildDebugBandsForPage1(
   let bestIndex = 0
 
   if (modeHint === "DISPLAY_DIRECT") {
-    windows = [
-      { topPct: 0.35, heightPct: 0.2 },
-      { topPct: 0.3, heightPct: 0.22 },
-      { topPct: 0.4, heightPct: 0.2 },
-    ]
+    // Même fenêtre que NEEDS_CROP : bande 20–40 % de la hauteur
+    windows = [{ topPct: 0.2, heightPct: 0.2 }]
     bestIndex = 0
   } else {
     windows = [{ topPct: 0.2, heightPct: 0.2 }]
     bestIndex = 0
   }
+
 
   const debugBands: DebugBand[] = []
   for (let i = 0; i < windows.length; i++) {
@@ -521,10 +523,20 @@ async function handleFileForLtv(file: File) {
     firstPage = null
   }
 
+  // Mémorise la page 1 pour les futures demandes de bandes (ltv:request-band)
+  if (firstPage) {
+    lastPdfForLtv = pdf
+    lastPage1ForLtv = firstPage
+  } else {
+    lastPdfForLtv = null
+    lastPage1ForLtv = null
+  }
+
   if (firstPage) {
     if (c.mode === "DISPLAY_DIRECT") {
       let bestNativeUrl: string | undefined = undefined
       let secondNativeUrl: string | undefined = undefined
+
 
       try {
         const extracted = await extractPageBitmapImages(firstPage)
@@ -631,6 +643,7 @@ async function handleFileForLtv(file: File) {
 
 function setup() {
   console.log("[ltvParser v5.2] module loaded")
+
   const onImport = (e: Event) => {
     const ce = e as CustomEvent<{ file?: File }>
     const file = ce.detail?.file
@@ -639,8 +652,46 @@ function setup() {
     }
   }
 
+  // Demande d'une nouvelle bande verticale sur la page 1 (scroll simulé)
+  const onRequestBand = (e: Event) => {
+    const ce = e as CustomEvent<{ topPct?: number; heightPct?: number }>
+    const topPctRaw = ce.detail?.topPct
+    const heightPctRaw = ce.detail?.heightPct
+
+    if (!lastPage1ForLtv) {
+      console.warn("[ltvParser] ltv:request-band ignoré : aucune page mémorisée")
+      return
+    }
+
+    const topPct = typeof topPctRaw === "number" ? topPctRaw : 0.2
+    const heightPct = typeof heightPctRaw === "number" ? heightPctRaw : 0.2
+
+    void (async () => {
+      try {
+        const dataUrl = await renderPageRegionAsDataURL(
+          lastPage1ForLtv as PDFPageProxy,
+          topPct,
+          heightPct
+        )
+
+        const bandEvt = new CustomEvent("ltv:band-update", {
+          detail: {
+            dataUrl: dataUrl || "",
+            topPct: topPct * 100,
+            bottomPct: (topPct + heightPct) * 100,
+          },
+        })
+        window.dispatchEvent(bandEvt)
+      } catch (err) {
+        console.warn("[ltvParser] erreur sur ltv:request-band", err)
+      }
+    })()
+  }
+
   window.addEventListener("lim:import-pdf", onImport as EventListener)
+  window.addEventListener("ltv:request-band", onRequestBand as EventListener)
 }
+
 
 setup()
 

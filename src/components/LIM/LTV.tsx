@@ -50,8 +50,13 @@ type LTVEventDetail = {
     height: number
     dataUrl: string
   }[]
+  debugBands?: {
+    dataUrl: string
+    topPct: number
+    bottomPct: number
+    chosen: boolean
+  }[]
 }
-
 
 const LTV: React.FC = () => {
   // --- état venant du parseur LTV (ltvParser.ts)
@@ -70,9 +75,14 @@ const LTV: React.FC = () => {
   const [selectedImage, setSelectedImage] = useState<"main" | "alt">("main")
 
   // 🔢 Nouvelle API : liste d'images candidates (toutes les bitmaps utiles côté PDF)
-  // On ne les utilise pas encore dans le rendu, on se contente de les stocker.
   const [candidateImages, setCandidateImages] = useState<string[]>([])
   const [selectedImageIndex, setSelectedImageIndex] = useState(0)
+
+  // Indices des images candidates sélectionnées (dans l'ordre de sélection)
+  const [selectedImageIndices, setSelectedImageIndices] = useState<number[]>([])
+
+  // Position verticale de la bande dans la page (0.0–1.0) pour le recadrage manuel
+  const [bandTopPct, setBandTopPct] = useState<number | null>(null)
 
   // Une fois validé par l'utilisateur → plus de bascule possible
   const [lockedDisplayDirect, setLockedDisplayDirect] =
@@ -81,6 +91,9 @@ const LTV: React.FC = () => {
   // lignes LTV structurées pour DISPLAY_DIRECT
   const [rows, setRows] = useState<LtvRow[]>([])
 
+  // Bande horizontale de la page complète (issue de debugBands)
+  // utilisée comme base pour le recadrage manuel déclenché depuis DISPLAY_DIRECT.
+  const [pageBandImage, setPageBandImage] = useState<string | null>(null)
 
   // --- refs
   const previewImgRef = useRef<HTMLImageElement | null>(null)
@@ -129,7 +142,6 @@ const LTV: React.FC = () => {
       console.log("[LTV] ltv:parsed RAW detail =", ce.detail)
 
       const mode = ce.detail?.mode
-      // champs possibles venant du parseur
       const imgMain = (ce.detail as any)?.previewImageDataUrl
       const imgAlt = (ce.detail as any)?.altPreviewImageDataUrl
       const incomingRows = ce.detail?.rows ?? []
@@ -141,7 +153,8 @@ const LTV: React.FC = () => {
         rows: incomingRows,
       })
 
-            const nativeImages = (ce.detail as any)?.nativeImages as
+      // Images natives (bande LTV auto, etc.)
+      const nativeImages = (ce.detail as any)?.nativeImages as
         | { width: number; height: number; dataUrl: string }[]
         | undefined
 
@@ -154,6 +167,27 @@ const LTV: React.FC = () => {
         setSelectedImageIndex(0)
       }
 
+      // Bandes de debug (bande horizontale de la page complète)
+      const debugBands = (ce.detail as any)?.debugBands as
+        | {
+            dataUrl: string
+            topPct: number
+            bottomPct: number
+            chosen: boolean
+          }[]
+        | undefined
+
+      let bestBandUrl: string | null = null
+      if (debugBands && debugBands.length > 0) {
+        const chosenBand = debugBands.find(
+          (b) => b.chosen && b.dataUrl && b.dataUrl.length > 0
+        )
+        bestBandUrl =
+          chosenBand?.dataUrl ||
+          debugBands.find((b) => b.dataUrl && b.dataUrl.length > 0)?.dataUrl ||
+          null
+      }
+      setPageBandImage(bestBandUrl ?? null)
 
       if (mode) setLtvMode(mode)
       setRows(incomingRows)
@@ -166,19 +200,20 @@ const LTV: React.FC = () => {
         setAltPreviewImage(imgAlt || undefined)
 
         // 🔢 On récupère toutes les images natives envoyées par le parseur (si dispo)
-        const nativeImages =
+        const nativeImagesInner =
           ((ce.detail as any)?.nativeImages ?? []) as {
             width: number
             height: number
             dataUrl: string
           }[]
 
-        const images = nativeImages.map((img) => img.dataUrl)
+        const images = nativeImagesInner.map((img) => img.dataUrl)
         setCandidateImages(images)
         setSelectedImageIndex(0)
+        setSelectedImageIndices([])
 
         console.log("[LTV] DISPLAY_DIRECT nativeImages reçues =", {
-          total: nativeImages.length,
+          total: nativeImagesInner.length,
           imagesCount: images.length,
         })
 
@@ -203,13 +238,11 @@ const LTV: React.FC = () => {
         return
       }
 
-
       // --- NEEDS_CROP : recadrage manuel ---
       if (mode === "NEEDS_CROP") {
         console.log("[LTV] init NEEDS_CROP")
 
         // même si imgMain est vide par erreur, on force le mode
-        // pour pouvoir afficher un fallback clair
         setPreviewImage(imgMain || undefined)
         setAltPreviewImage(undefined)
         setSelectedImage("main")
@@ -228,6 +261,7 @@ const LTV: React.FC = () => {
 
         setCandidateImages([])
         setSelectedImageIndex(0)
+        setSelectedImageIndices([])
 
         return
       }
@@ -252,7 +286,8 @@ const LTV: React.FC = () => {
 
       setCandidateImages([])
       setSelectedImageIndex(0)
-
+      setSelectedImageIndices([])
+      setPageBandImage(null)
     }
 
     window.addEventListener("ltv:parsed", onLtvParsed as EventListener)
@@ -260,6 +295,43 @@ const LTV: React.FC = () => {
       window.removeEventListener("ltv:parsed", onLtvParsed as EventListener)
     }
   }, [])
+
+  // Mise à jour de la bande quand le parseur renvoie une nouvelle zone (ltv:band-update)
+  useEffect(() => {
+    const onBandUpdate = (e: Event) => {
+      const ce = e as CustomEvent<{
+        dataUrl?: string
+        topPct?: number
+        bottomPct?: number
+      }>
+
+      const url = ce.detail?.dataUrl
+      if (!url) return
+
+      console.log("[LTV] ltv:band-update reçu", ce.detail)
+
+      // On n'exploite ces bandes que dans le recadrage manuel
+      if (ltvMode !== "NEEDS_CROP") return
+
+      // On remplace simplement l'image de base, on garde le cadre en %.
+      setPreviewImage(url)
+      setFinalCroppedUrl(null)
+      setIsCropping(true)
+
+      if (typeof ce.detail?.topPct === "number") {
+        // topPct arrive en pourcentage 0–100, on le stocke en 0.0–1.0
+        setBandTopPct(ce.detail.topPct / 100)
+      }
+    }
+
+    window.addEventListener("ltv:band-update", onBandUpdate as EventListener)
+    return () => {
+      window.removeEventListener(
+        "ltv:band-update",
+        onBandUpdate as EventListener
+      )
+    }
+  }, [ltvMode])
 
   // --- début du drag (NEEDS_CROP)
   const handleEdgeStart = (
@@ -510,6 +582,89 @@ const LTV: React.FC = () => {
   // --- Validation du choix en DISPLAY_DIRECT (fige l'image affichée)
   const confirmDisplayDirectChoice = () => {
     setLockedDisplayDirect(true)
+  }
+
+  // Sélection / désélection d'une image candidate par son index
+  const toggleCandidateSelection = (index: number) => {
+    setSelectedImageIndices((prev) => {
+      if (prev.includes(index)) {
+        // si déjà sélectionnée → on la retire
+        return prev.filter((i) => i !== index)
+      }
+      // sinon → on l'ajoute en fin de liste (ordre de sélection)
+      return [...prev, index]
+    })
+  }
+
+  // --- Basculer manuellement depuis DISPLAY_DIRECT vers NEEDS_CROP
+  const switchToManualCropFromDisplayDirect = () => {
+    // priorité : bande de page complète fournie via debugBands
+    const baseImage = pageBandImage || previewImage || finalCroppedUrl
+
+    if (!baseImage) {
+      console.warn(
+        "[LTV] switchToManualCropFromDisplayDirect: aucune image de base disponible"
+      )
+      return
+    }
+
+    console.log("[LTV] switchToManualCropFromDisplayDirect: baseImage =", {
+      hasPageBand: !!pageBandImage,
+      hasPreview: !!previewImage,
+      hasFinal: !!finalCroppedUrl,
+    })
+
+    setLtvMode("NEEDS_CROP")
+    setPreviewImage(baseImage)
+    setAltPreviewImage(undefined)
+    setSelectedImage("main")
+    setLockedDisplayDirect(false)
+
+    setIsCropping(true)
+    setFinalCroppedUrl(null)
+
+    setCropBox({ top: 20, bottom: 80, left: 10, right: 90 })
+    setZoom(1)
+    setPanX(0)
+    setPanY(0)
+    setDraggingEdge(null)
+    setAnchorX(null)
+    setAnchorY(null)
+
+    // en mode recadrage manuel, on ne parcourt plus les candidates
+    setCandidateImages([])
+    setSelectedImageIndex(0)
+    setSelectedImageIndices([])
+  }
+
+  // Demande au parseur de déplacer la bande LTV vers le haut ou le bas
+  const requestBandShift = (direction: "up" | "down") => {
+    if (ltvMode !== "NEEDS_CROP") return
+
+    const DEFAULT_BAND_HEIGHT = 0.2 // 20 % de la page
+    const STEP = 0.05 // déplacement de 5 % de la page
+
+    const currentTop = bandTopPct !== null ? bandTopPct : 0.2
+
+    const minTop = 0
+    const maxTop = 1 - DEFAULT_BAND_HEIGHT
+
+    let nextTop =
+      direction === "up" ? currentTop - STEP : currentTop + STEP
+
+    if (nextTop < minTop) nextTop = minTop
+    if (nextTop > maxTop) nextTop = maxTop
+
+    setBandTopPct(nextTop)
+
+    window.dispatchEvent(
+      new CustomEvent("ltv:request-band", {
+        detail: {
+          topPct: nextTop,
+          heightPct: DEFAULT_BAND_HEIGHT,
+        },
+      })
+    )
   }
 
   // ------------------------------------------------------------------
@@ -833,6 +988,44 @@ const LTV: React.FC = () => {
                       flexWrap: "wrap",
                     }}
                   >
+                    {/* Monter la bande LTV dans la page */}
+                    <button
+                      style={{
+                        backgroundColor: "#4b5563",
+                        color: "#fff",
+                        fontSize: "14px",
+                        fontWeight: 600,
+                        borderRadius: "6px",
+                        padding: "6px 12px",
+                        border: "2px solid #fff",
+                        boxShadow: "0 4px 8px rgba(0,0,0,0.6)",
+                        cursor: "pointer",
+                        minWidth: "150px",
+                      }}
+                      onClick={() => requestBandShift("up")}
+                    >
+                      Monter la page ▲
+                    </button>
+
+                    {/* Descendre la bande LTV dans la page */}
+                    <button
+                      style={{
+                        backgroundColor: "#4b5563",
+                        color: "#fff",
+                        fontSize: "14px",
+                        fontWeight: 600,
+                        borderRadius: "6px",
+                        padding: "6px 12px",
+                        border: "2px solid #fff",
+                        boxShadow: "0 4px 8px rgba(0,0,0,0.6)",
+                        cursor: "pointer",
+                        minWidth: "150px",
+                      }}
+                      onClick={() => requestBandShift("down")}
+                    >
+                      Descendre la page ▼
+                    </button>
+
                     <button
                       style={{
                         backgroundColor: "#1e40af",
@@ -932,6 +1125,20 @@ const LTV: React.FC = () => {
 
       const currentUrl = finalCroppedUrl
 
+      // Liste finale d'URL à afficher :
+      // - avant validation → toujours 1 seule image : currentUrl
+      // - après validation :
+      //      * si aucune image sélectionnée → currentUrl
+      //      * sinon → toutes les candidates sélectionnées, empilées dans l'ordre de selectedImageIndices
+      const effectiveImageUrls =
+        lockedDisplayDirect &&
+        selectedImageIndices.length > 0 &&
+        hasCandidates
+          ? selectedImageIndices
+              .filter((idx) => idx >= 0 && idx < totalCandidates)
+              .map((idx) => candidateImages[idx])
+          : [currentUrl]
+
       return (
         <tbody className="ltv-body-final">
           <tr>
@@ -944,20 +1151,33 @@ const LTV: React.FC = () => {
                 textAlign: "center",
               }}
             >
-              <img
-                src={currentUrl || ""}
-                alt="LTV auto"
+              {/* Affichage de toutes les images effectives (empilées) */}
+              <div
                 style={{
                   width: "100%",
-                  height: "auto",
-                  display: "block",
-                  border: "0",
-                  borderRadius: "0",
-                  boxShadow: "none",
-                  backgroundColor: "transparent",
-                  cursor: "default",
+                  backgroundColor: "#fff",
                 }}
-              />
+              >
+                {effectiveImageUrls.map((url, idx) => (
+                  <img
+                    key={idx}
+                    src={url || ""}
+                    alt="LTV auto"
+                    style={{
+                      width: "100%",
+                      height: "auto",
+                      display: "block",
+                      border: "0",
+                      borderRadius: "0",
+                      boxShadow: "none",
+                      backgroundColor: "transparent",
+                      cursor: "default",
+                      marginBottom:
+                        idx < effectiveImageUrls.length - 1 ? 4 : 0,
+                    }}
+                  />
+                ))}
+              </div>
 
               {/* Barre d'actions :
                  - affichée SEULEMENT tant que l'image n'est pas verrouillée
@@ -1047,6 +1267,43 @@ const LTV: React.FC = () => {
                     </>
                   )}
 
+                  {/* Compteur de sélection */}
+                  {hasCandidates && (
+                    <span
+                      style={{
+                        fontSize: "13px",
+                        fontWeight: 600,
+                        minWidth: "150px",
+                      }}
+                    >
+                      Images sélectionnées : {selectedImageIndices.length}
+                    </span>
+                  )}
+
+                  {/* Bouton sélectionner / désélectionner l'image courante */}
+                  <button
+                    style={{
+                      backgroundColor: "#2563eb",
+                      color: "#fff",
+                      fontSize: "13px",
+                      fontWeight: 600,
+                      borderRadius: "6px",
+                      padding: "6px 10px",
+                      border: "2px solid #000",
+                      boxShadow: "0 4px 8px rgba(0,0,0,0.4)",
+                      cursor: hasCandidates ? "pointer" : "not-allowed",
+                      minWidth: "170px",
+                      lineHeight: 1.2,
+                      opacity: hasCandidates ? 1 : 0.6,
+                    }}
+                    disabled={!hasCandidates}
+                    onClick={() => toggleCandidateSelection(safeIndex)}
+                  >
+                    {selectedImageIndices.includes(safeIndex)
+                      ? "Désélectionner cette image"
+                      : "Sélectionner cette image"}
+                  </button>
+
                   {/* bouton valider */}
                   <button
                     style={{
@@ -1066,6 +1323,28 @@ const LTV: React.FC = () => {
                   >
                     Valider ✅
                   </button>
+
+                  {/* bouton recadrage manuel depuis la bande de page */}
+                  <button
+                    style={{
+                      backgroundColor: "#b91c1c",
+                      color: "#fff",
+                      fontSize: "13px",
+                      fontWeight: 600,
+                      borderRadius: "6px",
+                      padding: "6px 10px",
+                      border: "2px solid #000",
+                      boxShadow: "0 4px 8px rgba(0,0,0,0.4)",
+                      cursor: pageBandImage ? "pointer" : "not-allowed",
+                      minWidth: "140px",
+                      lineHeight: 1.2,
+                      opacity: pageBandImage ? 1 : 0.6,
+                    }}
+                    disabled={!pageBandImage && !previewImage && !finalCroppedUrl}
+                    onClick={switchToManualCropFromDisplayDirect}
+                  >
+                    Recadrage manuel ✂️
+                  </button>
                 </div>
               )}
             </td>
@@ -1073,7 +1352,6 @@ const LTV: React.FC = () => {
         </tbody>
       )
     }
-
 
     // 5. fallback
     return (
@@ -1407,7 +1685,6 @@ const LTV: React.FC = () => {
                 </span>
               </div>
             </th>
-
 
             <th className="ltv-th vert" rowSpan={2}>
               <div className="vert-shell">
