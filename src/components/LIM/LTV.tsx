@@ -1158,25 +1158,25 @@ const LTV: React.FC = () => {
                   backgroundColor: "#fff",
                 }}
               >
-                {effectiveImageUrls.map((url, idx) => (
-                  <img
-                    key={idx}
-                    src={url || ""}
-                    alt="LTV auto"
-                    style={{
-                      width: "100%",
-                      height: "auto",
-                      display: "block",
-                      border: "0",
-                      borderRadius: "0",
-                      boxShadow: "none",
-                      backgroundColor: "transparent",
-                      cursor: "default",
-                      marginBottom:
-                        idx < effectiveImageUrls.length - 1 ? 4 : 0,
-                    }}
-                  />
-                ))}
+{effectiveImageUrls.map((url, idx) => (
+  <img
+    key={idx}
+    src={url || ""}
+    alt="LTV auto"
+    style={{
+      width: "100%",
+      height: "auto",
+      display: "block",
+      border: "0",
+      borderRadius: "0",
+      boxShadow: "none",
+      backgroundColor: "transparent",
+      cursor: "default",
+      marginBottom: 0,
+    }}
+  />
+))}
+
               </div>
 
               {/* Barre d'actions :

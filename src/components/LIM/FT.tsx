@@ -2319,14 +2319,60 @@ export default function FT({ variant = "classic" }: FTProps) {
       dependenciaForLog
     );
 
-    // 1) LIGNE INTERMÉDIAIRE POUR L'HEURE D'ARRIVÉE (au-dessus de la ligne principale)
-    if (showArrivalSpacer) {
-      // Si une zone CSV est ouverte ici, cette ligne est "entre deux barres" => full
+    // 1) INTERLIGNES (remarque rouge + heure d'arrivée) AVANT la ligne principale
+    //    - Trains PAIRS : remarque rouge + heure d'arrivée sur la même ligne, puis heure de départ (ligne principale)
+    //    - Autres cas   : heure d'arrivée seule au-dessus de la ligne principale (comportement inchangé)
+    const shouldRenderArrivalSpacer =
+      showArrivalSpacer &&
+      !(hasNoteAfter && i < rawEntries.length - 1);
+
+
+    if (!isOdd && hasNoteAfter && i < rawEntries.length - 1) {
+      // 👇 Remarque rouge (ligne noteOnly) en premier pour les trains PAIRS
+      const vmaxClassForNote = csvZoneOpen ? " ft-v-csv-full" : "";
+
+      rows.push(
+        <tr className="ft-row-inter" key={`note-before-${i}`}>
+          {(() => {
+            renderedRowIndex++;
+            return <td className="ft-td"></td>;
+          })()}
+
+          <td className={"ft-td ft-v-cell" + vmaxClassForNote}>
+            <div className="ft-v-inner text-center"></div>
+          </td>
+
+          <td className="ft-td" />
+
+          <td className="ft-td">
+            {renderDependenciaCell(nextEntry as FTEntry)}
+          </td>
+
+          {/* Com vide */}
+          <td className="ft-td" />
+
+          {/* Hora d'arrivée sur la même ligne que les remarques rouges,
+              alignée en bas de la cellule */}
+          <td className="ft-td ft-hora-cell">
+            {showArrivalSpacer && horaArrivee && (
+              <span className="ft-hora-arrivee">{horaArrivee}</span>
+            )}
+          </td>
+
+          {/* Técn / Conc / Radio vides */}
+          <td className="ft-td" />
+          <td className="ft-td" />
+          <td className="ft-td" />
+          <td className="ft-td ft-rc-cell" />
+          <td className="ft-td ft-td-nivel" />
+        </tr>
+      );
+    } else if (shouldRenderArrivalSpacer) {
+      // Cas général (IMPAIR ou sans remarque rouge) : heure d'arrivée seule au-dessus de la ligne principale
       const vmaxClassForArrival = csvZoneOpen ? " ft-v-csv-full" : "";
 
       rows.push(
         <tr className="ft-row-spacer" key={`arrival-${i}`}>
-          {/* on ne montre plus l'ancien index visuel ici */}
           <td className="ft-td"></td>
 
           <td className={"ft-td ft-v-cell" + vmaxClassForArrival}>
@@ -2349,42 +2395,9 @@ export default function FT({ variant = "classic" }: FTProps) {
         </tr>
       );
 
-      // on garde l'incrément interne pour rester synchro
       renderedRowIndex++;
     }
 
-    // Trains PAIRS : si la ligne suivante est une noteOnly, on l'affiche AVANT la ligne principale
-    if (!isOdd && hasNoteAfter && i < rawEntries.length - 1) {
-      const vmaxClassForNote = csvZoneOpen ? " ft-v-csv-full" : "";
-
-      rows.push(
-        <tr className="ft-row-inter" key={`note-before-${i}`}>
-          {(() => {
-            renderedRowIndex++;
-            return <td className="ft-td"></td>;
-          })()}
-
-          <td className={"ft-td ft-v-cell" + vmaxClassForNote}>
-            <div className="ft-v-inner text-center"></div>
-          </td>
-
-          <td className="ft-td" />
-
-          <td className="ft-td">
-            {renderDependenciaCell(nextEntry as FTEntry)}
-          </td>
-
-          <td className="ft-td" />
-          <td className="ft-td" />
-          <td className="ft-td" />
-          <td className="ft-td" />
-          <td className="ft-td" />
-          <td className="ft-td ft-rc-cell" />
-          <td className="ft-td ft-td-nivel" />
-        </tr>
-      );
-      // on ne fait PAS i++ ici, on laisse la boucle gérer la ligne suivante
-    }
 
     // 2) LIGNE PRINCIPALE (toujours)
     rows.push(
@@ -2651,8 +2664,17 @@ export default function FT({ variant = "classic" }: FTProps) {
             {renderDependenciaCell(nextEntry as FTEntry)}
           </td>
 
+          {/* Com vide */}
           <td className="ft-td" />
-          <td className="ft-td" />
+
+          {/* Hora d'arrivée sur la même ligne que les remarques rouges */}
+          <td className="ft-td ft-hora-cell">
+            {showArrivalSpacer && horaArrivee && (
+              <span className="ft-hora-arrivee">{horaArrivee}</span>
+            )}
+          </td>
+
+          {/* Técn / Conc / Radio vides */}
           <td className="ft-td" />
           <td className="ft-td" />
           <td className="ft-td" />
@@ -3040,6 +3062,18 @@ export default function FT({ variant = "classic" }: FTProps) {
           padding: 0 4px 2px;
         }
 
+        /* Lignes de remarques rouges : on veut la même logique que pour les spacers,
+           mais sur toute la hauteur de la ligne (même bas que le texte rouge) */
+        .ft-row-inter .ft-hora-cell {
+          display: table-cell;
+          text-align: center;
+          vertical-align: bottom;
+          font-size: 0.75rem;
+          line-height: 1.1;
+          padding: 0 4px 2px;
+        }
+
+
         .ft-row-spacer .ft-rc-bar,
         .ft-row-spacer .ft-rc-value,
         .ft-row-spacer .ft-v-bar {
@@ -3230,4 +3264,3 @@ export default function FT({ variant = "classic" }: FTProps) {
     </section>
   );
 }
-
