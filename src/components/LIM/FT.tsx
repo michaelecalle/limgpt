@@ -449,13 +449,34 @@ export default function FT({ variant = "classic" }: FTProps) {
   // Dernière position GPS reçue (mémorisée pour les futurs calculs)
   const lastGpsPositionRef = React.useRef<GpsPosition | null>(null);
 
-  const ORANGE_TIMEOUT_MS = 60_000;
+  // ===== GPS quality (fresh + freeze) =====
+  type GpsState = "RED" | "ORANGE" | "GREEN";
+
+  const gpsStateRef = React.useRef<GpsState>("RED");
+
+  // Pour détecter une position "fraîche"
+  const lastGpsSampleAtRef = React.useRef<number>(0);
+
+  // Pour détecter un PK figé
+  const lastPkRef = React.useRef<number | null>(null);
+  const lastPkChangeAtRef = React.useRef<number>(0);
+
+  // Réglages (ajustables)
+  const GPS_FRESH_SEC = 8; // si l'échantillon est plus vieux -> pas "green"
+  const GPS_FREEZE_WINDOW_MS = 10_000; // PK inchangé trop longtemps -> orange
+  const GPS_FREEZE_PK_DELTA_KM = 0.02; // 0.02 km = 20 m
+
+  const ORANGE_TIMEOUT_MS = 30_000;
 
   // État "GPS OK" (fix + sur la ligne) pour l'hystérésis
   const gpsHealthyRef = React.useRef<boolean>(false);
 
+
   // Timer en cours pour le passage différé en mode HORAIRE
   const orangeTimeoutRef = React.useRef<number | null>(null);
+
+    // Timestamp de démarrage de l’hystérésis ORANGE (pour calcul remaining/elapsed)
+  const orangeTimeoutStartedAtRef = React.useRef<number | null>(null);
 
   // Suivi du scroll manuel pendant que le mode horaire est actif
   const isManualScrollRef = React.useRef(false);
@@ -1275,63 +1296,313 @@ export default function FT({ variant = "classic" }: FTProps) {
 
       const pk = (detail as any).pk as number | null | undefined;
 
-      // --- Hystérésis sur le mode de référence (HORAIRE / GPS) ---
+      // --- Qualité GPS + machine d'états (RED / ORANGE / GREEN) + hystérésis ---
+      const nowTs = Date.now();
+
       const hasGpsFix =
         typeof (detail as any).lat === "number" &&
         typeof (detail as any).lon === "number";
 
       const onLine = !!(detail as any).onLine;
-      const isHealthy = hasGpsFix && onLine;
+
+      // Fraîcheur : on prend le timestamp fourni si dispo, sinon "maintenant"
+      const sampleTs =
+        typeof (detail as any).timestamp === "number"
+          ? (detail as any).timestamp
+          : nowTs;
+
+      lastGpsSampleAtRef.current = sampleTs;
+
+      const ageSec = Math.max(0, (nowTs - sampleTs) / 1000);
+
+      const distRibbonM =
+        typeof (detail as any).distance_m === "number"
+          ? (detail as any).distance_m
+          : null;
+
+      const accuracyM =
+        typeof (detail as any).accuracy === "number"
+          ? (detail as any).accuracy
+          : null;
+
+      // --- Détection "PK figé" ---
+      if (typeof pk === "number" && Number.isFinite(pk)) {
+        const prevPk = lastPkRef.current;
+        if (typeof prevPk === "number" && Number.isFinite(prevPk)) {
+          const dPk = Math.abs(pk - prevPk);
+          if (dPk >= GPS_FREEZE_PK_DELTA_KM) {
+            lastPkChangeAtRef.current = nowTs;
+            lastPkRef.current = pk;
+          }
+        } else {
+          lastPkRef.current = pk;
+          lastPkChangeAtRef.current = nowTs;
+        }
+      }
+
+      const pkFrozen =
+        hasGpsFix &&
+        onLine &&
+        typeof pk === "number" &&
+        Number.isFinite(pk) &&
+        lastPkChangeAtRef.current > 0 &&
+        nowTs - lastPkChangeAtRef.current >= GPS_FREEZE_WINDOW_MS;
+
+      const isStale = ageSec > GPS_FRESH_SEC;
+
+      const reasonCodes: string[] = [];
+      if (!hasGpsFix) reasonCodes.push("no_fix");
+      if (hasGpsFix && !onLine) reasonCodes.push("off_line");
+      if (hasGpsFix && onLine && isStale) reasonCodes.push("stale_fix");
+      if (pkFrozen) reasonCodes.push("pk_frozen");
+
+      let nextState: "RED" | "ORANGE" | "GREEN" = "RED";
+      if (!hasGpsFix) {
+        nextState = "RED";
+      } else if (!onLine || isStale || pkFrozen) {
+        nextState = "ORANGE";
+      } else {
+        nextState = "GREEN";
+      }
+
+      if (gpsStateRef.current !== nextState) {
+        const prevState = gpsStateRef.current;
+        gpsStateRef.current = nextState;
+
+        logTestEvent("gps:state-change", {
+          prevState,
+          nextState,
+          reasonCodes,
+          ageSec,
+          distRibbonM,
+          accuracyM,
+          pk: typeof pk === "number" && Number.isFinite(pk) ? pk : null,
+          onLine,
+
+          // ✅ paramètres utiles pour interpréter le state
+          gpsFreshSec: GPS_FRESH_SEC,
+          gpsFreezeWindowMs: GPS_FREEZE_WINDOW_MS,
+          gpsFreezePkDeltaKm: GPS_FREEZE_PK_DELTA_KM,
+          orangeTimeoutMs: ORANGE_TIMEOUT_MS,
+        });
+      }
+
+      const isHealthy = nextState === "GREEN";
 
       // On met à jour l'état "GPS OK" pour les callbacks différés
       gpsHealthyRef.current = isHealthy;
 
+      // --- Hystérésis sur le mode de référence (HORAIRE / GPS) ---
+      // Règle spéciale : si GPS = RED (pas de fix), on bascule IMMÉDIATEMENT en HORAIRE.
+      // Sinon (ORANGE), on garde l’hystérésis.
       if (isHealthy) {
-        // GPS valide ET position sur la ligne : on annule tout passage différé en horaire
         if (orangeTimeoutRef.current !== null) {
+          const startedAt = orangeTimeoutStartedAtRef.current;
+          const now = Date.now();
+
+          const elapsedMs =
+            typeof startedAt === "number" ? Math.max(0, now - startedAt) : null;
+
+          const remainingMs =
+            typeof elapsedMs === "number"
+              ? Math.max(0, ORANGE_TIMEOUT_MS - elapsedMs)
+              : null;
+
           window.clearTimeout(orangeTimeoutRef.current);
           orangeTimeoutRef.current = null;
+          orangeTimeoutStartedAtRef.current = null;
+
           console.log(
-            "[FT][gps] Signal revenu avant 60 s -> annulation du passage en mode HORAIRE"
+            "[FT][gps] Signal revenu avant 30 s -> annulation du passage en mode HORAIRE",
+            { elapsedMs, remainingMs }
           );
+
+          logTestEvent("gps:orange-hysteresis-cancel", {
+            reason: "gps_green_recovered",
+            state: gpsStateRef.current,
+            elapsedMs,
+            remainingMs,
+            orangeTimeoutMs: ORANGE_TIMEOUT_MS,
+          });
         }
 
+
         if (referenceModeRef.current !== "GPS") {
-          console.log("[FT][gps] Passage en mode GPS (signal OK, onLine = true)");
+          console.log("[FT][gps] Passage en mode GPS (signal OK + fresh)");
+          logTestEvent("gps:mode-change", {
+            prevMode: referenceModeRef.current,
+            nextMode: "GPS",
+            reason: "gps_green",
+            state: gpsStateRef.current,
+
+            gpsFreshSec: GPS_FRESH_SEC,
+            gpsFreezeWindowMs: GPS_FREEZE_WINDOW_MS,
+            gpsFreezePkDeltaKm: GPS_FREEZE_PK_DELTA_KM,
+            orangeTimeoutMs: ORANGE_TIMEOUT_MS,
+          });
           setReferenceMode("GPS");
         }
       } else {
-        // Signal dégradé : pas de fix ou position hors de la bande LAV
-        if (referenceModeRef.current === "GPS") {
-          // On ne bascule pas tout de suite en HORAIRE : on démarre un timer si ce n'est pas déjà fait
-          if (orangeTimeoutRef.current === null) {
-            console.log(
-              "[FT][gps] Signal dégradé -> démarrage de l'hystérésis (60 s avant mode HORAIRE)"
-            );
-            const timeoutId = window.setTimeout(() => {
-              // Au bout de 60 s, on ne bascule en HORAIRE que si :
-              //  - le signal n'est toujours pas redevenu "healthy"
-              //  - et on est toujours officiellement en mode GPS
-              if (!gpsHealthyRef.current && referenceModeRef.current === "GPS") {
-                console.log(
-                  "[FT][gps] Hystérésis écoulée (>= 60 s en signal dégradé) -> passage en mode HORAIRE"
-                );
-                setReferenceMode("HORAIRE");
-              } else {
-                console.log(
-                  "[FT][gps] Hystérésis expirée mais signal redevenu OK ou mode déjà changé -> pas de bascule"
-                );
-              }
-              orangeTimeoutRef.current = null;
-            }, ORANGE_TIMEOUT_MS);
-            orangeTimeoutRef.current = timeoutId;
-          }
-        } else {
-          // On est déjà en mode HORAIRE : on s'assure simplement qu'aucun timer ne traîne
+        const isRed = gpsStateRef.current === "RED";
+
+        if (isRed) {
+          // ✅ RED = bascule immédiate en HORAIRE
           if (orangeTimeoutRef.current !== null) {
+            const startedAt = orangeTimeoutStartedAtRef.current;
+            const now = Date.now();
+
+            const elapsedMs =
+              typeof startedAt === "number" ? Math.max(0, now - startedAt) : null;
+
+            const remainingMs =
+              typeof elapsedMs === "number"
+                ? Math.max(0, ORANGE_TIMEOUT_MS - elapsedMs)
+                : null;
+
             window.clearTimeout(orangeTimeoutRef.current);
             orangeTimeoutRef.current = null;
+            orangeTimeoutStartedAtRef.current = null;
+
+            console.log("[FT][gps] Hystérésis ORANGE annulée car GPS RED", {
+              elapsedMs,
+              remainingMs,
+            });
+
+            logTestEvent("gps:orange-hysteresis-abort", {
+              reason: "gps_red_no_fix",
+              state: gpsStateRef.current,
+              elapsedMs,
+              remainingMs,
+              orangeTimeoutMs: ORANGE_TIMEOUT_MS,
+            });
           }
+
+
+          if (referenceModeRef.current !== "HORAIRE") {
+            console.log(
+              "[FT][gps] GPS RED (pas de fix) -> bascule immédiate en mode HORAIRE"
+            );
+            logTestEvent("gps:mode-change", {
+              prevMode: referenceModeRef.current,
+              nextMode: "HORAIRE",
+              reason: "gps_red_no_fix",
+              state: gpsStateRef.current,
+
+              gpsFreshSec: GPS_FRESH_SEC,
+              gpsFreezeWindowMs: GPS_FREEZE_WINDOW_MS,
+              gpsFreezePkDeltaKm: GPS_FREEZE_PK_DELTA_KM,
+              orangeTimeoutMs: ORANGE_TIMEOUT_MS,
+            });
+            setReferenceMode("HORAIRE");
+          }
+        } else {
+          // ORANGE = on garde l’hystérésis avant bascule en HORAIRE
+          if (referenceModeRef.current === "GPS") {
+            if (orangeTimeoutRef.current === null) {
+              const startedAt = Date.now();
+              const deadlineAt = startedAt + ORANGE_TIMEOUT_MS;
+
+              orangeTimeoutStartedAtRef.current = startedAt;
+
+              console.log(
+                "[FT][gps] Signal dégradé -> démarrage de l'hystérésis (30 s avant mode HORAIRE)",
+                { startedAt, deadlineAt, orangeTimeoutMs: ORANGE_TIMEOUT_MS }
+              );
+
+              logTestEvent("gps:orange-hysteresis-start", {
+                state: gpsStateRef.current,
+                startedAt,
+                deadlineAt,
+                orangeTimeoutMs: ORANGE_TIMEOUT_MS,
+              });
+
+              const timeoutId = window.setTimeout(() => {
+                const now = Date.now();
+                const s = orangeTimeoutStartedAtRef.current;
+
+                const elapsedMs =
+                  typeof s === "number" ? Math.max(0, now - s) : null;
+
+                if (!gpsHealthyRef.current && referenceModeRef.current === "GPS") {
+                  console.log(
+                    "[FT][gps] Hystérésis écoulée (>= 30 s en signal dégradé) -> passage en mode HORAIRE",
+                    { elapsedMs }
+                  );
+
+                  logTestEvent("gps:mode-change", {
+                    prevMode: "GPS",
+                    nextMode: "HORAIRE",
+                    reason: "orange_hysteresis_timeout",
+                    state: gpsStateRef.current,
+
+                    gpsFreshSec: GPS_FRESH_SEC,
+                    gpsFreezeWindowMs: GPS_FREEZE_WINDOW_MS,
+                    gpsFreezePkDeltaKm: GPS_FREEZE_PK_DELTA_KM,
+                    orangeTimeoutMs: ORANGE_TIMEOUT_MS,
+
+                    // ✅ bonus timing
+                    startedAt: s,
+                    deadlineAt,
+                    elapsedMs,
+                  });
+
+                  setReferenceMode("HORAIRE");
+                } else {
+                  console.log(
+                    "[FT][gps] Hystérésis expirée mais signal redevenu OK ou mode déjà changé -> pas de bascule",
+                    { elapsedMs }
+                  );
+
+                  logTestEvent("gps:orange-hysteresis-expired-no-switch", {
+                    state: gpsStateRef.current,
+                    orangeTimeoutMs: ORANGE_TIMEOUT_MS,
+                    startedAt: s,
+                    deadlineAt,
+                    elapsedMs,
+                    mode: referenceModeRef.current,
+                    gpsHealthy: gpsHealthyRef.current,
+                  });
+                }
+
+                orangeTimeoutRef.current = null;
+                orangeTimeoutStartedAtRef.current = null;
+              }, ORANGE_TIMEOUT_MS);
+
+              orangeTimeoutRef.current = timeoutId;
+            }
+          } else {
+            if (orangeTimeoutRef.current !== null) {
+              const startedAt = orangeTimeoutStartedAtRef.current;
+              const now = Date.now();
+
+              const elapsedMs =
+                typeof startedAt === "number" ? Math.max(0, now - startedAt) : null;
+
+              const remainingMs =
+                typeof elapsedMs === "number"
+                  ? Math.max(0, ORANGE_TIMEOUT_MS - elapsedMs)
+                  : null;
+
+              window.clearTimeout(orangeTimeoutRef.current);
+              orangeTimeoutRef.current = null;
+              orangeTimeoutStartedAtRef.current = null;
+
+              console.log(
+                "[FT][gps] Hystérésis ORANGE annulée car mode déjà HORAIRE / pas en GPS",
+                { elapsedMs, remainingMs }
+              );
+
+              logTestEvent("gps:orange-hysteresis-cancel", {
+                reason: "not_in_gps_mode_anymore",
+                state: gpsStateRef.current,
+                elapsedMs,
+                remainingMs,
+                orangeTimeoutMs: ORANGE_TIMEOUT_MS,
+                mode: referenceModeRef.current,
+              });
+            }
+          }
+
         }
       }
 
@@ -1370,85 +1641,106 @@ export default function FT({ variant = "classic" }: FTProps) {
             // On mémorise cette ligne comme nouveau point d'ancrage GPS
             lastAnchoredRowRef.current = idx;
 
-            // On récupère l'heure "effectivement utilisée" pour cette ligne :
-            // - soit hora de la FT brute
-            // - soit heure injectée via heuresDetectees (mapping S&D)
-            const horaText = resolveHoraForRowIndex(idx);
+            // Heure de départ (FT brute ou mapping S&D)
+            const departHoraText = resolveHoraForRowIndex(idx);
+            const departMinutes = parseHoraToMinutes(departHoraText);
 
-            if (typeof horaText === "string" && horaText.trim().length > 0) {
+            // En mode GPS : si une heure d'arrivée a été calculée pour cette ligne,
+            // on l'utilise pour le calcul du delta (objectif "à l'heure à l'arrivée").
+            let usedMinutes: number | null = departMinutes;
+            let usedHoraText: string = departHoraText;
+            let usedSource: "DEPART" | "ARRIVEE" = "DEPART";
+
+            let arrivalMinutes: number | null = null;
+            const arrivalList = arrivalEventsRef.current || [];
+            const arrivalMatch = arrivalList.find((ev) => ev.rowIndex === idx);
+            if (arrivalMatch && Number.isFinite(arrivalMatch.arrivalMin)) {
+              arrivalMinutes = arrivalMatch.arrivalMin;
+            }
+
+            if (referenceModeRef.current === "GPS" && arrivalMinutes != null) {
+              usedMinutes = arrivalMinutes;
+              usedHoraText = formatMinutesToHora(arrivalMinutes);
+              usedSource = "ARRIVEE";
+            }
+
+            // Si on a une heure utilisable, on recale le delta
+            if (usedMinutes != null) {
               // 1) On note la ligne pour les futurs démarrages du mode horaire
               recalibrateFromRowRef.current = idx;
 
-              // 2) On recalcule le delta réel (maintenant - heure FT de cette ligne)
-              const horaMinutes = parseHoraToMinutes(horaText);
-              if (horaMinutes != null) {
-                const now = new Date();
-                const nowMinutes = now.getHours() * 60 + now.getMinutes();
+              // 2) On recalcule le delta réel (maintenant - heure utilisée)
+              const now = new Date();
+              const nowMinutes = now.getHours() * 60 + now.getMinutes();
 
-                const fixedDelay = nowMinutes - horaMinutes;
+              const fixedDelay = nowMinutes - usedMinutes;
 
-                // 3) On recale la base interne du mode horaire sur cette ligne
-                autoScrollBaseRef.current = {
-                  realMin: nowMinutes,
-                  firstHoraMin: horaMinutes,
-                  fixedDelay,
-                };
+              // 3) On recale la base interne du mode horaire sur cette ligne
+              autoScrollBaseRef.current = {
+                realMin: nowMinutes,
+                firstHoraMin: usedMinutes,
+                fixedDelay,
+              };
 
-                // 4) On met à jour immédiatement le delta affiché dans la TitleBar
-                const text =
-                  fixedDelay === 0
-                    ? "0 min"
-                    : fixedDelay > 0
-                      ? `+ ${fixedDelay} min`
-                      : `- ${-fixedDelay} min`;
+              // 4) On met à jour immédiatement le delta affiché dans la TitleBar
+              const text =
+                fixedDelay === 0
+                  ? "0 min"
+                  : fixedDelay > 0
+                    ? `+ ${fixedDelay} min`
+                    : `- ${-fixedDelay} min`;
 
-                window.dispatchEvent(
-                  new CustomEvent("lim:schedule-delta", {
-                    detail: {
-                      text,
-                      isLargeDelay: Math.abs(fixedDelay) >= 5,
-                    },
-                  })
-                );
+              window.dispatchEvent(
+                new CustomEvent("lim:schedule-delta", {
+                  detail: {
+                    text,
+                    isLargeDelay: Math.abs(fixedDelay) >= 5,
+                  },
+                })
+              );
 
-                const nowHHMM =
-                  now.getHours().toString().padStart(2, "0") +
-                  ":" +
-                  now.getMinutes().toString().padStart(2, "0");
+              const nowHHMM =
+                now.getHours().toString().padStart(2, "0") +
+                ":" +
+                now.getMinutes().toString().padStart(2, "0");
 
-                console.log(
-                  "[FT][gps] Recalage horaire via GPS — hora=",
-                  horaText,
-                  " (",
-                  horaMinutes,
-                  "min ) / now=",
-                  nowHHMM,
-                  " => delta=",
-                  fixedDelay,
-                  "min (ligne index=",
-                  idx,
-                  ")"
-                );
+              console.log(
+                "[FT][gps] Recalage horaire via GPS — source=",
+                usedSource,
+                "| used=",
+                usedHoraText,
+                "(",
+                usedMinutes,
+                "min ) / now=",
+                nowHHMM,
+                " => delta=",
+                fixedDelay,
+                "min (ligne index=",
+                idx,
+                ")"
+              );
 
-                logTestEvent("ft:delta:gps-recalage", {
-                  rowIndex: idx,
-                  hora: horaText,
-                  horaMinutes,
-                  nowHHMM,
-                  fixedDelay,
-                  pk: entry?.pk ?? null,
-                  dependencia: entry?.dependencia ?? null,
-                });
+              logTestEvent("ft:delta:gps-recalage", {
+                rowIndex: idx,
+                nowHHMM,
+                fixedDelay,
+                pk: entry?.pk ?? null,
+                dependencia: entry?.dependencia ?? null,
 
-              } else {
-                console.warn(
-                  "[FT][gps] Impossible de parser l'heure pour recalage via GPS:",
-                  horaText
-                );
-              }
+                // ✅ détails recalage
+                usedSource,
+                usedHora: usedHoraText,
+                usedMinutes,
+
+                // ✅ debug
+                departHora: departHoraText || null,
+                departMinutes: departMinutes ?? null,
+                arrivalMinutes,
+              });
             } else {
               console.log(
-                "[FT][gps] Ligne GPS sans heure résolue (ni FT brute, ni mapping S&D) -> pas de recalage"
+                "[FT][gps] Ligne GPS sans heure utilisable (départ/arrivée) -> pas de recalage",
+                { idx, departHoraText, arrivalMinutes }
               );
             }
           }
@@ -1471,6 +1763,8 @@ export default function FT({ variant = "classic" }: FTProps) {
         window.clearTimeout(orangeTimeoutRef.current);
         orangeTimeoutRef.current = null;
       }
+      orangeTimeoutStartedAtRef.current = null;
+
     };
   }, [rawEntries, referenceMode, heuresDetectees]);
 
@@ -2497,25 +2791,7 @@ export default function FT({ variant = "classic" }: FTProps) {
             "ft-td" + (shouldHighlightRow ? " ft-highlight-cell" : "")
           }
         >
-          {(() => {
-            const isActive =
-              testModeEnabled && autoScrollEnabled && i === activeRowIndex;
-
-            if (!isActive) {
-              return sitKm;
-            }
-
-            const markerClass =
-              referenceMode === "GPS"
-                ? "ft-active-marker-gps"
-                : "ft-active-marker-horaire";
-
-            return (
-              <span className={markerClass}>
-                {`> ${sitKm}`}
-              </span>
-            );
-          })()}
+          {sitKm}
         </td>
 
 
@@ -3256,8 +3532,6 @@ export default function FT({ variant = "classic" }: FTProps) {
               <tbody>{rows}</tbody>
             </table>
 
-            {/* overlay de repère à 1/3 de la hauteur visible */}
-            {testModeEnabled && <div className="ft-active-line"></div>}
           </div>
         </FTScrolling>
       </div>

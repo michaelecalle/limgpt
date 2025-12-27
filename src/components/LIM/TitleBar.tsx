@@ -47,6 +47,9 @@ export default function TitleBar() {
   const [pdfMode, setPdfMode] = useState<'blue' | 'green' | 'red'>('blue')
   const [testRecording, setTestRecording] = useState(false)
 
+  // ✅ Auto-start du test : garde-fou pour ne le lancer qu'une fois
+  const testAutoStartedRef = useRef(false)
+
   // avance/retard affiché à côté de l'heure (ex: "+3 min" ou "-1 min")
   const [scheduleDelta, setScheduleDelta] = useState<string | null>(null)
   const [scheduleDeltaIsLarge, setScheduleDeltaIsLarge] = useState(false)
@@ -75,14 +78,13 @@ export default function TitleBar() {
   // Texte affiché dans le badge GPS quand on est calé sur la ligne (PK estimé)
   const [gpsPkDisplay, setGpsPkDisplay] = useState<string | null>(null)
 
-
   useEffect(() => {
     window.dispatchEvent(
       new CustomEvent('lim:pdf-mode-change', { detail: { mode: pdfMode } })
     )
   }, [pdfMode])
 
-  // Diffusion du mode test (bouton "Début du test / Fin du test")
+  // Diffusion du mode test (pilotage global FT / overlays)
   useEffect(() => {
     window.dispatchEvent(
       new CustomEvent('lim:test-mode', {
@@ -91,6 +93,30 @@ export default function TitleBar() {
     )
   }, [testRecording])
 
+  // ✅ Auto-démarrage du test à l'ouverture de l'app
+  useEffect(() => {
+    if (testAutoStartedRef.current) return
+    testAutoStartedRef.current = true
+
+    // label simple à l'ouverture (train inconnu au boot, pdfMode = blue)
+    const bootMode: 'blue' = 'blue'
+
+    const labelParts: string[] = []
+    if (trainDisplay) labelParts.push(`train_${trainDisplay}`)
+    labelParts.push(`mode_${bootMode}`)
+    labelParts.push('auto')
+
+    const label = labelParts.join('_')
+
+    startTestSession(label)
+    logTestEvent('ui:test:auto-start', {
+      train: trainDisplay ?? null,
+      pdfMode: bootMode,
+      label,
+    })
+    setTestRecording(true)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   // ----- Initialisation du moteur GPS→PK -----
   useEffect(() => {
@@ -310,7 +336,6 @@ export default function TitleBar() {
     }
   }, [])
 
-
   // écoute le mode horaire envoyé par FT
   useEffect(() => {
     const handler = (e: Event) => {
@@ -332,7 +357,7 @@ export default function TitleBar() {
     }
   }, [])
 
-    // écoute le mode de référence (HORAIRE / GPS) envoyé par FT
+  // écoute le mode de référence (HORAIRE / GPS) envoyé par FT
   useEffect(() => {
     const handler = (e: Event) => {
       const ce = e as CustomEvent
@@ -429,6 +454,7 @@ export default function TitleBar() {
       window.removeEventListener('gps:position', handler as EventListener)
     }
   }, [])
+
   // Surcouche : GPS vert uniquement si la position est « fraîche »
   useEffect(() => {
     // Variables fermées sur l'effet : pas de nouveau hook
@@ -863,7 +889,6 @@ export default function TitleBar() {
               >
                 <span>🕑</span>
               </button>
-
             </>
           )}
         </div>
@@ -988,41 +1013,102 @@ export default function TitleBar() {
             {pdfMode === 'red' && <span className="font-bold">MODE SECOURS</span>}
           </button>
 
-          {/* Bouton de test en ligne (log entre début/fin) */}
+          {/* STOP (interruption du test) */}
           <button
             type="button"
             onClick={() => {
-              if (!testRecording) {
-                // Démarrage d'une nouvelle session de test
-                const labelParts: string[] = []
-                if (trainDisplay) labelParts.push(`train_${trainDisplay}`)
-                labelParts.push(`mode_${pdfMode}`)
-                const label = labelParts.join('_')
+              // 1) Décharger le PDF + retour état initial UI
+              // - stop auto-scroll + stop GPS
+              if (autoScroll) {
+                setAutoScroll(false)
+                window.dispatchEvent(
+                  new CustomEvent('ft:auto-scroll-change', {
+                    detail: { enabled: false, source: 'titlebar' },
+                  })
+                )
+              }
+              stopGpsWatch()
 
-                startTestSession(label)
-                logTestEvent('ui:test:start', {
-                  train: trainDisplay ?? null,
-                  pdfMode,
-                })
-                setTestRecording(true)
-              } else {
-                // Fin de test + export du fichier .log
-                logTestEvent('ui:test:stop', {})
+              // - reset affichage avance/retard
+              setScheduleDelta(null)
+              setScheduleDeltaIsLarge(false)
+
+              // - retour à l'état initial PDF
+              setPdfMode('blue')
+
+              // 🔊 événements de "déchargement" (à écouter côté PDF/FT si besoin)
+              window.dispatchEvent(new CustomEvent('lim:clear-pdf'))
+              window.dispatchEvent(new CustomEvent('ft:clear-pdf'))
+              window.dispatchEvent(
+                new CustomEvent('lim:pdf-raw', { detail: { file: null } })
+              )
+
+              // 2) Stop session de test (on fige les logs)
+              if (testRecording) {
+                logTestEvent('ui:test:stop', { source: 'stop_button' })
                 stopTestSession()
                 setTestRecording(false)
+              }
+
+              // 3) Proposition export
+              const wantExport = window.confirm('Exporter les logs, oui ou non ?')
+
+              if (wantExport) {
                 const exported = exportTestLog()
                 if (!exported) {
                   alert('Aucun événement de test à exporter.')
                 }
               }
+
+              // 4) ✅ Redémarrer immédiatement une nouvelle session de log
+              //    (label forcé en mode_blue, car setPdfMode est asynchrone)
+              const nextMode: 'blue' = 'blue'
+
+              const labelParts: string[] = []
+              if (trainDisplay) labelParts.push(`train_${trainDisplay}`)
+              labelParts.push(`mode_${nextMode}`)
+              labelParts.push('auto')
+
+              const label = labelParts.join('_')
+              startTestSession(label)
+              setTestRecording(true)
+
+              // (Si Non : rien à faire, on est déjà revenu à l'état initial)
             }}
+            disabled={!testRecording}
             className={
               testRecording
-                ? 'h-8 px-3 text-xs rounded-md bg-red-500 text-white font-semibold'
-                : 'h-8 px-3 text-xs rounded-md bg-zinc-200 text-zinc-800 dark:bg-zinc-700 dark:text-zinc-100'
+                ? 'h-8 w-10 rounded-md bg-red-500 text-white font-semibold flex items-center justify-center'
+                : 'h-8 w-10 rounded-md bg-zinc-200 text-zinc-500 dark:bg-zinc-700 dark:text-zinc-400 flex items-center justify-center cursor-not-allowed'
             }
+            title="Stop (interrompre le test)"
+            aria-label="Stop"
           >
-            {testRecording ? 'Fin du test' : 'Début du test'}
+            {/* icône panneau STOP */}
+            <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+              <path
+                d="M8.2 2.6h7.6l5.6 5.6v7.6l-5.6 5.6H8.2L2.6 15.8V8.2L8.2 2.6Z"
+                fill="currentColor"
+                opacity="0.18"
+              />
+              <path
+                d="M8.2 2.6h7.6l5.6 5.6v7.6l-5.6 5.6H8.2L2.6 15.8V8.2L8.2 2.6Z"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.6"
+              />
+              <text
+                x="12"
+                y="14"
+                textAnchor="middle"
+                fontSize="7"
+                fontWeight="700"
+                fill="currentColor"
+                style={{ letterSpacing: '0.5px' }}
+              >
+                STOP
+              </text>
+            </svg>
           </button>
 
           <input
