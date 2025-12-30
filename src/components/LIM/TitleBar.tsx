@@ -800,11 +800,9 @@ export default function TitleBar() {
                 }}
                 className={`h-7 w-7 rounded-full flex items-center justify-center text-[11px] transition
                   ${
-                    standbyMode
-                      ? 'bg-orange-400 text-white dark:bg-orange-500'
-                      : autoScroll
-                        ? 'bg-emerald-500 text-white'
-                        : 'bg-zinc-200/70 text-zinc-800 dark:bg-zinc-700/70 dark:text-zinc-100'
+                    autoScroll
+                      ? 'bg-emerald-500 text-white'
+                      : 'bg-zinc-200/70 text-zinc-800 dark:bg-zinc-700/70 dark:text-zinc-100'
                   }
                 `}
                 title={
@@ -824,6 +822,7 @@ export default function TitleBar() {
                   </svg>
                 )}
               </button>
+
 
               {/* GPS */}
               <button

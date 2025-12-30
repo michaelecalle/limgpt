@@ -3437,16 +3437,17 @@ export default function FT({ variant = "classic" }: FTProps) {
           color: #fff;
         }
 
-        .ft-active-line {
-          position: absolute;
-          left: 0;
-          right: 0;
-          top: 40%;
-          height: 2px;
-          background: red;
-          pointer-events: none;
-          z-index: 6;
-        }
+.ft-active-line {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 40%;
+  height: 2px;
+  background: transparent; /* invisible mais garde la boîte */
+  pointer-events: none;
+  z-index: 6;
+}
+
         /* Couleur du '>' de la ligne active (debug) */
         .ft-active-marker-gps {
           color: #16a34a; /* vert GPS */
@@ -3492,6 +3493,8 @@ export default function FT({ variant = "classic" }: FTProps) {
         }
 
       `}</style>
+
+      <div className="ft-active-line" aria-hidden="true" />
 
       <div
         className={
