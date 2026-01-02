@@ -44,7 +44,6 @@ export default function FT({ variant = "classic" }: FTProps) {
   // mode test (active les overlays de debug FT)
   const [testModeEnabled, setTestModeEnabled] = useState(false);
 
-
   const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
     const el = e.currentTarget;
     scrollContainerRef.current = el;
@@ -463,19 +462,39 @@ export default function FT({ variant = "classic" }: FTProps) {
 
   // Réglages (ajustables)
   const GPS_FRESH_SEC = 8; // si l'échantillon est plus vieux -> pas "green"
-  const GPS_FREEZE_WINDOW_MS = 10_000; // PK inchangé trop longtemps -> orange
+  const GPS_FREEZE_WINDOW_MS = 10_000; // PK inchangé trop longtemps -> ORANGE
   const GPS_FREEZE_PK_DELTA_KM = 0.02; // 0.02 km = 20 m
 
-  const ORANGE_TIMEOUT_MS = 30_000;
+  const ORANGE_TIMEOUT_MS = 20_000; // 20s après ORANGE
+  // PK figé : ORANGE à 10s, puis RED à 30s (10s + 20s)
+  const GPS_FREEZE_TO_RED_MS = GPS_FREEZE_WINDOW_MS + ORANGE_TIMEOUT_MS;
+
+  // Si le PK figé est proche (<= 1 km) d’une gare commerciale => standby auto
+  const STATION_PROX_KM = 1.0;
 
   // État "GPS OK" (fix + sur la ligne) pour l'hystérésis
   const gpsHealthyRef = React.useRef<boolean>(false);
 
+  // ===== Garde-fou "saut de PK" (PK incohérent) =====
+  // Dernier PK jugé "cohérent" (référence pour détecter un saut)
+  const lastCoherentPkRef = React.useRef<number | null>(null);
+  const lastCoherentTsRef = React.useRef<number>(0);
+
+  // Quand un saut est détecté, on active une phase ORANGE et on ignore le PK
+  // jusqu’à ce qu’on retrouve un PK cohérent par rapport au PK de référence.
+  const pkJumpGuardActiveRef = React.useRef<boolean>(false);
+  const pkJumpGuardBasePkRef = React.useRef<number | null>(null);
+  const pkJumpGuardBaseTsRef = React.useRef<number>(0);
+
+  // Tolérances (généreuses) pour ne bloquer que les gros sauts non physiques
+  const GPS_JUMP_BASE_TOLERANCE_KM = 0.8; // tolérance fixe (km)
+  const GPS_JUMP_MAX_SPEED_KMH = 420; // plafond vitesse plausible (km/h) pour tolérance dynamique
+  const GPS_JUMP_MIN_ELAPSED_SEC = 1.0; // ignore la détection si delta t trop faible
 
   // Timer en cours pour le passage différé en mode HORAIRE
   const orangeTimeoutRef = React.useRef<number | null>(null);
 
-    // Timestamp de démarrage de l’hystérésis ORANGE (pour calcul remaining/elapsed)
+  // Timestamp de démarrage de l’hystérésis ORANGE (pour calcul remaining/elapsed)
   const orangeTimeoutStartedAtRef = React.useRef<number | null>(null);
 
   // Suivi du scroll manuel pendant que le mode horaire est actif
@@ -958,7 +977,6 @@ export default function FT({ variant = "classic" }: FTProps) {
 
     if (!activeRow || !refLine) return;
 
-    const containerRect = container.getBoundingClientRect();
     const rowRect = activeRow.getBoundingClientRect();
     const refRect = refLine.getBoundingClientRect();
 
@@ -1284,6 +1302,40 @@ export default function FT({ variant = "classic" }: FTProps) {
 
   // -- écoute des positions GPS projetées (évènement gps:position)
   useEffect(() => {
+    // --- helper : trouver la gare commerciale la plus proche (via arrivalEventsRef) ---
+    const findNearestCommercialStopRowIndex = (
+      targetPk: number,
+      maxDeltaKm: number
+    ): { rowIndex: number; deltaKm: number } | null => {
+      const stops = arrivalEventsRef.current || [];
+      if (!Array.isArray(stops) || stops.length === 0) return null;
+
+      let bestRow: number | null = null;
+      let bestDelta = Number.POSITIVE_INFINITY;
+
+      for (const s of stops) {
+        const rowIndex = s?.rowIndex;
+        if (typeof rowIndex !== "number") continue;
+
+        const entry = rawEntries[rowIndex];
+        const pkStr = entry?.pk;
+        const pkNum =
+          typeof pkStr === "string" || typeof pkStr === "number" ? Number(pkStr) : NaN;
+        if (!Number.isFinite(pkNum)) continue;
+
+        const d = Math.abs(pkNum - targetPk);
+        if (d < bestDelta) {
+          bestDelta = d;
+          bestRow = rowIndex;
+        }
+      }
+
+      if (bestRow == null) return null;
+      if (bestDelta > maxDeltaKm) return null;
+
+      return { rowIndex: bestRow, deltaKm: bestDelta };
+    };
+
     const handler = (e: Event) => {
       const ce = e as CustomEvent<any>;
       const detail = ce.detail || {};
@@ -1294,7 +1346,11 @@ export default function FT({ variant = "classic" }: FTProps) {
       console.log("[FT][gps] position reçue =", detail);
       console.log("[FT][gps] rawEntries.length =", rawEntries.length);
 
-      const pk = (detail as any).pk as number | null | undefined;
+      // PK brut reçu
+      const pkRaw = (detail as any).pk as number | null | undefined;
+      // PK "utilisable" (peut être forcé à null par le garde-fou)
+      let pk: number | null =
+        typeof pkRaw === "number" && Number.isFinite(pkRaw) ? pkRaw : null;
 
       // --- Qualité GPS + machine d'états (RED / ORANGE / GREEN) + hystérésis ---
       const nowTs = Date.now();
@@ -1314,6 +1370,211 @@ export default function FT({ variant = "classic" }: FTProps) {
       lastGpsSampleAtRef.current = sampleTs;
 
       const ageSec = Math.max(0, (nowTs - sampleTs) / 1000);
+      const isStale = ageSec > GPS_FRESH_SEC;
+
+      // ===== GARDE-FOU "SAUT DE PK" =====
+      // Objectif : si un saut énorme arrive, on ne pilote plus la FT avec ce PK.
+      // On force ORANGE et on attend de retrouver une cohérence.
+      const speedKmPerSec = GPS_JUMP_MAX_SPEED_KMH / 3600;
+
+      const lastCoherentPk = lastCoherentPkRef.current;
+      const lastCoherentTs = lastCoherentTsRef.current;
+
+      // Détection uniquement si on a un point cohérent précédent, un PK courant, et un fix sur la ligne non-stale.
+      let pkJumpSuspect = false;
+
+      if (
+        hasGpsFix &&
+        onLine &&
+        !isStale &&
+        pk != null &&
+        lastCoherentPk != null &&
+        lastCoherentTs > 0
+      ) {
+        const dtSec = Math.max(0, (sampleTs - lastCoherentTs) / 1000);
+
+        if (dtSec >= GPS_JUMP_MIN_ELAPSED_SEC) {
+          const maxDeltaKm = GPS_JUMP_BASE_TOLERANCE_KM + speedKmPerSec * dtSec;
+          const dPk = Math.abs(pk - lastCoherentPk);
+
+          if (dPk > maxDeltaKm) {
+            pkJumpSuspect = true;
+          }
+        }
+      }
+
+      // Entrée en garde-fou : on se base sur le DERNIER PK cohérent
+      if (
+        pkJumpSuspect &&
+        !pkJumpGuardActiveRef.current &&
+        lastCoherentPk != null
+      ) {
+        pkJumpGuardActiveRef.current = true;
+        pkJumpGuardBasePkRef.current = lastCoherentPk;
+        pkJumpGuardBaseTsRef.current = sampleTs;
+
+        // 📌 enrichissement log : tout le contexte utile au diagnostic
+        const dtSecSinceLast =
+          lastCoherentTs > 0 ? Math.max(0, (sampleTs - lastCoherentTs) / 1000) : null;
+
+        const maxDeltaKmSinceLast =
+          dtSecSinceLast != null
+            ? GPS_JUMP_BASE_TOLERANCE_KM + speedKmPerSec * dtSecSinceLast
+            : null;
+
+        const dPkSinceLast =
+          pk != null && lastCoherentPk != null ? Math.abs(pk - lastCoherentPk) : null;
+
+        logTestEvent("gps:pk-jump-guard:enter", {
+          // --- brut GPS / projection ---
+          lat: typeof (detail as any).lat === "number" ? (detail as any).lat : null,
+          lon: typeof (detail as any).lon === "number" ? (detail as any).lon : null,
+          accuracyM: typeof (detail as any).accuracy === "number" ? (detail as any).accuracy : null,
+          distanceRibbonM:
+            typeof (detail as any).distance_m === "number" ? (detail as any).distance_m : null,
+          s_km: typeof (detail as any).s_km === "number" ? (detail as any).s_km : null,
+
+          // --- timestamps / fraîcheur ---
+          sampleTs,
+          nowTs,
+          ageSec,
+          isStale,
+
+          // --- PK ---
+          pkRaw: pkRaw ?? null,
+          pkCandidate: pk, // PK qui a déclenché le suspect
+          pkLastCoherent: lastCoherentPk,
+
+          // --- calculs de détection ---
+          dtSecSinceLast,
+          dPkSinceLast,
+          maxDeltaKmSinceLast,
+          minElapsedSec: GPS_JUMP_MIN_ELAPSED_SEC,
+
+          // --- contexte app ---
+          onLine,
+          hasGpsFix,
+          referenceMode: referenceModeRef.current,
+          autoScrollEnabled: autoScrollEnabledRef.current,
+
+          // --- paramètres garde-fou ---
+          baseToleranceKm: GPS_JUMP_BASE_TOLERANCE_KM,
+          maxSpeedKmh: GPS_JUMP_MAX_SPEED_KMH,
+        });
+      }
+
+      // Si le garde-fou est actif : on reste ORANGE tant qu’on n’a pas récupéré un PK cohérent
+      if (pkJumpGuardActiveRef.current) {
+        const basePk = pkJumpGuardBasePkRef.current;
+        const baseTs = pkJumpGuardBaseTsRef.current;
+
+        if (pk != null && basePk != null && baseTs > 0) {
+          const dtSecFromBase = Math.max(0, (sampleTs - baseTs) / 1000);
+          const recoverMaxDeltaKm =
+            GPS_JUMP_BASE_TOLERANCE_KM + speedKmPerSec * dtSecFromBase;
+
+          const dBase = Math.abs(pk - basePk);
+
+          if (dBase <= recoverMaxDeltaKm) {
+            // Sortie garde-fou : PK redevenu cohérent
+            pkJumpGuardActiveRef.current = false;
+            pkJumpGuardBasePkRef.current = null;
+            pkJumpGuardBaseTsRef.current = 0;
+
+            // ce PK redevient la nouvelle référence cohérente
+            lastCoherentPkRef.current = pk;
+            lastCoherentTsRef.current = sampleTs;
+
+            logTestEvent("gps:pk-jump-guard:exit", {
+              pkRaw: pkRaw ?? null,
+              pkAccepted: pk,
+              basePk,
+              dtSecFromBase,
+              recoverMaxDeltaKm,
+              ageSec,
+              onLine,
+              hasGpsFix,
+            });
+          } else {
+            // Toujours incohérent -> on ignore le PK
+            // ✅ Log enrichi : tout ce qu'il faut pour diagnostiquer le "saut"
+            const lcPk = lastCoherentPkRef.current;
+            const lcTs = lastCoherentTsRef.current;
+            const dtSecFromLastCoherent =
+              lcTs > 0 ? Math.max(0, (sampleTs - lcTs) / 1000) : null;
+
+            // Tolérance "théorique" par rapport au dernier PK cohérent (si dispo)
+            const maxDeltaFromLastCoherentKm =
+              dtSecFromLastCoherent != null
+                ? GPS_JUMP_BASE_TOLERANCE_KM + speedKmPerSec * dtSecFromLastCoherent
+                : null;
+
+            const dPkFromLastCoherentKm =
+              typeof pk === "number" &&
+              Number.isFinite(pk) &&
+              typeof lcPk === "number" &&
+              Number.isFinite(lcPk)
+                ? Math.abs(pk - lcPk)
+                : null;
+
+            logTestEvent("gps:pk-jump-guard:reject", {
+              // valeurs brutes / utilisées
+              pkRaw: pkRaw ?? null,
+              pkRejected: typeof pk === "number" && Number.isFinite(pk) ? pk : null,
+
+              // base du garde-fou
+              basePk,
+              baseTs,
+              dtSecFromBase,
+              recoverMaxDeltaKm,
+              dBase,
+
+              // dernière référence cohérente
+              lastCoherentPk: typeof lcPk === "number" && Number.isFinite(lcPk) ? lcPk : null,
+              lastCoherentTs: lcTs > 0 ? lcTs : null,
+              dtSecFromLastCoherent,
+
+              // comparaison “classique” (avant garde-fou) pour comprendre le déclenchement
+              maxDeltaFromLastCoherentKm,
+              dPkFromLastCoherentKm,
+              jumpBaseToleranceKm: GPS_JUMP_BASE_TOLERANCE_KM,
+              jumpMaxSpeedKmh: GPS_JUMP_MAX_SPEED_KMH,
+              jumpMinElapsedSec: GPS_JUMP_MIN_ELAPSED_SEC,
+
+              // contexte GPS
+              sampleTs,
+              nowTs,
+              ageSec,
+              onLine,
+              hasGpsFix,
+              isStale,
+              gpsState: gpsStateRef.current,
+              referenceMode: referenceModeRef.current,
+
+              // contexte utile (si tu lis le log après coup)
+              pkJumpSuspectNow: pkJumpSuspect,
+              pkJumpGuardActive: pkJumpGuardActiveRef.current,
+            });
+
+            pk = null;
+          }
+        } else {
+          // Pas de PK exploitable => on ignore
+          pk = null;
+        }
+      }
+
+      // Si on n’est PAS en garde-fou, et que tout est sain, on met à jour la référence cohérente
+      if (
+        !pkJumpGuardActiveRef.current &&
+        hasGpsFix &&
+        onLine &&
+        !isStale &&
+        pk != null
+      ) {
+        lastCoherentPkRef.current = pk;
+        lastCoherentTsRef.current = sampleTs;
+      }
 
       const distRibbonM =
         typeof (detail as any).distance_m === "number"
@@ -1340,30 +1601,60 @@ export default function FT({ variant = "classic" }: FTProps) {
         }
       }
 
-      const pkFrozen =
+      const pkFreezeElapsedMs =
         hasGpsFix &&
         onLine &&
         typeof pk === "number" &&
         Number.isFinite(pk) &&
-        lastPkChangeAtRef.current > 0 &&
-        nowTs - lastPkChangeAtRef.current >= GPS_FREEZE_WINDOW_MS;
+        lastPkChangeAtRef.current > 0
+          ? nowTs - lastPkChangeAtRef.current
+          : 0;
 
-      const isStale = ageSec > GPS_FRESH_SEC;
+      // PK figé : ORANGE à 10s, puis RED à 30s total
+      const pkFrozenOrange = pkFreezeElapsedMs >= GPS_FREEZE_WINDOW_MS;
+      const pkFrozenRed = pkFreezeElapsedMs >= GPS_FREEZE_TO_RED_MS;
 
       const reasonCodes: string[] = [];
       if (!hasGpsFix) reasonCodes.push("no_fix");
       if (hasGpsFix && !onLine) reasonCodes.push("off_line");
       if (hasGpsFix && onLine && isStale) reasonCodes.push("stale_fix");
-      if (pkFrozen) reasonCodes.push("pk_frozen");
+      if (pkJumpGuardActiveRef.current) reasonCodes.push("pk_jump_guard");
+      if (pkFrozenRed) reasonCodes.push("pk_frozen_red");
+      else if (pkFrozenOrange) reasonCodes.push("pk_frozen_orange");
+
+      // ✅ on mémorise l'état précédent pour détecter "entrée en RED"
+      const prevGpsState = gpsStateRef.current;
+
+      // PK incohérent (garde-fou) => on force RED pour bascule immédiate en horaire
+      const pkIncoherentNow = pkJumpSuspect || pkJumpGuardActiveRef.current;
+      if (pkIncoherentNow) {
+        if (!reasonCodes.includes("pk_incoherent")) {
+          reasonCodes.push("pk_incoherent");
+        }
+      }
 
       let nextState: "RED" | "ORANGE" | "GREEN" = "RED";
       if (!hasGpsFix) {
         nextState = "RED";
-      } else if (!onLine || isStale || pkFrozen) {
+      } else if (pkIncoherentNow) {
+        // ✅ Nouveau : PK incohérent => RED (pas ORANGE) pour éviter un saut en scroll GPS
+        nextState = "RED";
+      } else if (pkFrozenRed) {
+        // GPS figé trop longtemps => "RED"
+        nextState = "RED";
+      } else if (!onLine || isStale || pkFrozenOrange) {
         nextState = "ORANGE";
       } else {
         nextState = "GREEN";
       }
+
+      // ✅ vrai uniquement AU MOMENT où on bascule en RED à cause du figeage
+      const enteredRedFromFreeze =
+        prevGpsState !== "RED" && nextState === "RED" && pkFrozenRed === true;
+
+      // ✅ nouveau : vrai uniquement AU MOMENT où PK incohérent force RED
+      const enteredRedFromPkIncoherent =
+        prevGpsState !== "RED" && nextState === "RED" && pkIncoherentNow === true;
 
       if (gpsStateRef.current !== nextState) {
         const prevState = gpsStateRef.current;
@@ -1382,227 +1673,220 @@ export default function FT({ variant = "classic" }: FTProps) {
           // ✅ paramètres utiles pour interpréter le state
           gpsFreshSec: GPS_FRESH_SEC,
           gpsFreezeWindowMs: GPS_FREEZE_WINDOW_MS,
+          gpsFreezeToRedMs: GPS_FREEZE_TO_RED_MS,
           gpsFreezePkDeltaKm: GPS_FREEZE_PK_DELTA_KM,
           orangeTimeoutMs: ORANGE_TIMEOUT_MS,
+          stationProxKm: STATION_PROX_KM,
         });
+
+        // ✅ log dédié : entrée en RED provoquée par PK incohérent
+        if (enteredRedFromPkIncoherent) {
+          logTestEvent("gps:red:pk-incoherent", {
+            pkRaw: pkRaw ?? null,
+            pkUsed: typeof pk === "number" && Number.isFinite(pk) ? pk : null,
+            pkJumpSuspect,
+            pkJumpGuardActive: pkJumpGuardActiveRef.current,
+
+            lastCoherentPk:
+              typeof lastCoherentPkRef.current === "number" &&
+              Number.isFinite(lastCoherentPkRef.current)
+                ? lastCoherentPkRef.current
+                : null,
+            lastCoherentTs: lastCoherentTsRef.current > 0 ? lastCoherentTsRef.current : null,
+
+            sampleTs,
+            nowTs,
+            ageSec,
+            onLine,
+            hasGpsFix,
+            isStale,
+
+            prevGpsState,
+            nextState,
+            reasonCodes,
+          });
+        }
       }
 
       const isHealthy = nextState === "GREEN";
 
-      // On met à jour l'état "GPS OK" pour les callbacks différés
+      // On met à jour l'état "GPS OK" (conservé pour les logs / debug)
       gpsHealthyRef.current = isHealthy;
 
-      // --- Hystérésis sur le mode de référence (HORAIRE / GPS) ---
-      // Règle spéciale : si GPS = RED (pas de fix), on bascule IMMÉDIATEMENT en HORAIRE.
-      // Sinon (ORANGE), on garde l’hystérésis.
-      if (isHealthy) {
-        if (orangeTimeoutRef.current !== null) {
-          const startedAt = orangeTimeoutStartedAtRef.current;
-          const now = Date.now();
+      // --- Mode de référence (HORAIRE / GPS) ---
+      // Nouvelle règle : on reste en GPS tant que l'état n'est pas RED.
+      // On bascule en HORAIRE uniquement si GPS = RED (pas de fix OU figeage rouge).
+      const isRed = gpsStateRef.current === "RED";
 
-          const elapsedMs =
-            typeof startedAt === "number" ? Math.max(0, now - startedAt) : null;
+      // On n'utilise plus l'hystérésis ORANGE : si un timer traîne, on le coupe.
+      if (orangeTimeoutRef.current !== null) {
+        const startedAt = orangeTimeoutStartedAtRef.current;
+        const now = Date.now();
 
-          const remainingMs =
-            typeof elapsedMs === "number"
-              ? Math.max(0, ORANGE_TIMEOUT_MS - elapsedMs)
-              : null;
+        const elapsedMs =
+          typeof startedAt === "number" ? Math.max(0, now - startedAt) : null;
 
-          window.clearTimeout(orangeTimeoutRef.current);
-          orangeTimeoutRef.current = null;
-          orangeTimeoutStartedAtRef.current = null;
+        window.clearTimeout(orangeTimeoutRef.current);
+        orangeTimeoutRef.current = null;
+        orangeTimeoutStartedAtRef.current = null;
 
-          console.log(
-            "[FT][gps] Signal revenu avant 30 s -> annulation du passage en mode HORAIRE",
-            { elapsedMs, remainingMs }
-          );
+        logTestEvent("gps:orange-hysteresis-abort", {
+          reason: "rule_changed_no_hysteresis",
+          state: gpsStateRef.current,
+          elapsedMs,
+          orangeTimeoutMs: ORANGE_TIMEOUT_MS,
+          mode: referenceModeRef.current,
+        });
+      }
 
-          logTestEvent("gps:orange-hysteresis-cancel", {
-            reason: "gps_green_recovered",
+      if (isRed) {
+        // RED => bascule immédiate en HORAIRE
+        if (referenceModeRef.current !== "HORAIRE") {
+          console.log("[FT][gps] GPS RED -> mode HORAIRE");
+
+          // ✅ Cause exacte de la bascule en HORAIRE (très utile à l’export STOP)
+          const redReason = pkIncoherentNow
+            ? "gps_red_pk_incoherent"
+            : pkFrozenRed
+            ? "gps_red_pk_frozen"
+            : !hasGpsFix
+            ? "gps_red_no_fix"
+            : !onLine
+            ? "gps_red_off_line"
+            : isStale
+            ? "gps_red_stale_fix"
+            : "gps_red_other";
+
+          logTestEvent("gps:mode-change", {
+            prevMode: referenceModeRef.current,
+            nextMode: "HORAIRE",
+            reason: redReason,
             state: gpsStateRef.current,
-            elapsedMs,
-            remainingMs,
+
+            // ✅ contexte utile (pour comprendre “pourquoi”)
+            reasonCodes,
+            hasGpsFix,
+            onLine,
+            isStale,
+            ageSec,
+
+            pkRaw: pkRaw ?? null,
+            pkUsed: typeof pk === "number" && Number.isFinite(pk) ? pk : null,
+
+            // ✅ diagnostic "PK incohérent"
+            pkIncoherentNow,
+            pkJumpSuspect,
+            pkJumpGuardActive: pkJumpGuardActiveRef.current,
+
+            gpsFreshSec: GPS_FRESH_SEC,
+            gpsFreezeWindowMs: GPS_FREEZE_WINDOW_MS,
+            gpsFreezeToRedMs: GPS_FREEZE_TO_RED_MS,
+            gpsFreezePkDeltaKm: GPS_FREEZE_PK_DELTA_KM,
             orangeTimeoutMs: ORANGE_TIMEOUT_MS,
           });
+
+          setReferenceMode("HORAIRE");
         }
-
-
+      } else {
+        // GREEN ou ORANGE => mode GPS
         if (referenceModeRef.current !== "GPS") {
-          console.log("[FT][gps] Passage en mode GPS (signal OK + fresh)");
+          console.log("[FT][gps] GPS non-RED -> mode GPS");
           logTestEvent("gps:mode-change", {
             prevMode: referenceModeRef.current,
             nextMode: "GPS",
-            reason: "gps_green",
+            reason: "gps_not_red",
             state: gpsStateRef.current,
 
             gpsFreshSec: GPS_FRESH_SEC,
             gpsFreezeWindowMs: GPS_FREEZE_WINDOW_MS,
+            gpsFreezeToRedMs: GPS_FREEZE_TO_RED_MS,
             gpsFreezePkDeltaKm: GPS_FREEZE_PK_DELTA_KM,
             orangeTimeoutMs: ORANGE_TIMEOUT_MS,
           });
           setReferenceMode("GPS");
         }
-      } else {
-        const isRed = gpsStateRef.current === "RED";
+      }
 
-        if (isRed) {
-          // ✅ RED = bascule immédiate en HORAIRE
-          if (orangeTimeoutRef.current !== null) {
-            const startedAt = orangeTimeoutStartedAtRef.current;
-            const now = Date.now();
+      // ✅ CAS SPÉCIAL ARRÊT EN GARE :
+      // Si on ENTRE en RED suite à PK figé >= 30s, et si le PK figé est proche d'une gare commerciale,
+      // alors on passe automatiquement en Standby horaire avec cette gare sélectionnée.
+      if (enteredRedFromFreeze && typeof pk === "number" && Number.isFinite(pk)) {
+        // ✅ Log "entrée en RED depuis freeze" (avant décision proximité gare)
+        logTestEvent("gps:freeze-red:entered", {
+          pk,
+          pkFreezeElapsedMs,
+          lastPkChangeAt: lastPkChangeAtRef.current,
+          stationProxKm: STATION_PROX_KM,
+          prevGpsState,
+          nextState,
+          ageSec,
+          hasGpsFix,
+          onLine,
+          reasonCodes,
+        });
 
-            const elapsedMs =
-              typeof startedAt === "number" ? Math.max(0, now - startedAt) : null;
+        console.log("[FT][gps] ENTER RED (freeze)", {
+          pk,
+          pkFreezeElapsedMs,
+          lastPkChangeAt: lastPkChangeAtRef.current,
+          stationProxKm: STATION_PROX_KM,
+          prevGpsState,
+          nextState,
+          ageSec,
+          hasGpsFix,
+          onLine,
+          reasonCodes,
+        });
 
-            const remainingMs =
-              typeof elapsedMs === "number"
-                ? Math.max(0, ORANGE_TIMEOUT_MS - elapsedMs)
-                : null;
+        const nearest = findNearestCommercialStopRowIndex(pk, STATION_PROX_KM);
 
-            window.clearTimeout(orangeTimeoutRef.current);
-            orangeTimeoutRef.current = null;
-            orangeTimeoutStartedAtRef.current = null;
+        if (nearest) {
+          const { rowIndex, deltaKm } = nearest;
 
-            console.log("[FT][gps] Hystérésis ORANGE annulée car GPS RED", {
-              elapsedMs,
-              remainingMs,
-            });
+          console.log(
+            "[FT][gps] RED sur figeage + proche gare commerciale -> Standby auto sur rowIndex=",
+            rowIndex,
+            "deltaKm=",
+            deltaKm,
+            "pk=",
+            pk
+          );
 
-            logTestEvent("gps:orange-hysteresis-abort", {
-              reason: "gps_red_no_fix",
-              state: gpsStateRef.current,
-              elapsedMs,
-              remainingMs,
-              orangeTimeoutMs: ORANGE_TIMEOUT_MS,
-            });
-          }
+          logTestEvent("gps:freeze-red:station-standby", {
+            rowIndex,
+            deltaKm,
+            pk,
+            state: gpsStateRef.current,
+            reason: "pk_frozen_red_near_commercial_stop",
+            stationProxKm: STATION_PROX_KM,
+          });
 
+          // Visuel + base de recalage (comme un clic Standby)
+          setSelectedRowIndex(rowIndex);
+          recalibrateFromRowRef.current = rowIndex;
 
-          if (referenceModeRef.current !== "HORAIRE") {
-            console.log(
-              "[FT][gps] GPS RED (pas de fix) -> bascule immédiate en mode HORAIRE"
-            );
-            logTestEvent("gps:mode-change", {
-              prevMode: referenceModeRef.current,
-              nextMode: "HORAIRE",
-              reason: "gps_red_no_fix",
-              state: gpsStateRef.current,
+          // Optionnel mais cohérent : mettre aussi la ligne active sur cette gare
+          setActiveRowIndex(rowIndex);
 
-              gpsFreshSec: GPS_FRESH_SEC,
-              gpsFreezeWindowMs: GPS_FREEZE_WINDOW_MS,
-              gpsFreezePkDeltaKm: GPS_FREEZE_PK_DELTA_KM,
-              orangeTimeoutMs: ORANGE_TIMEOUT_MS,
-            });
-            setReferenceMode("HORAIRE");
-          }
+          // On coupe l’auto-scroll et on passe en Standby (🕑 orange)
+          window.dispatchEvent(
+            new CustomEvent("ft:auto-scroll-change", {
+              detail: { enabled: false },
+            })
+          );
+
+          window.dispatchEvent(
+            new CustomEvent("lim:hourly-mode", {
+              detail: { enabled: false, standby: true },
+            })
+          );
         } else {
-          // ORANGE = on garde l’hystérésis avant bascule en HORAIRE
-          if (referenceModeRef.current === "GPS") {
-            if (orangeTimeoutRef.current === null) {
-              const startedAt = Date.now();
-              const deadlineAt = startedAt + ORANGE_TIMEOUT_MS;
-
-              orangeTimeoutStartedAtRef.current = startedAt;
-
-              console.log(
-                "[FT][gps] Signal dégradé -> démarrage de l'hystérésis (30 s avant mode HORAIRE)",
-                { startedAt, deadlineAt, orangeTimeoutMs: ORANGE_TIMEOUT_MS }
-              );
-
-              logTestEvent("gps:orange-hysteresis-start", {
-                state: gpsStateRef.current,
-                startedAt,
-                deadlineAt,
-                orangeTimeoutMs: ORANGE_TIMEOUT_MS,
-              });
-
-              const timeoutId = window.setTimeout(() => {
-                const now = Date.now();
-                const s = orangeTimeoutStartedAtRef.current;
-
-                const elapsedMs =
-                  typeof s === "number" ? Math.max(0, now - s) : null;
-
-                if (!gpsHealthyRef.current && referenceModeRef.current === "GPS") {
-                  console.log(
-                    "[FT][gps] Hystérésis écoulée (>= 30 s en signal dégradé) -> passage en mode HORAIRE",
-                    { elapsedMs }
-                  );
-
-                  logTestEvent("gps:mode-change", {
-                    prevMode: "GPS",
-                    nextMode: "HORAIRE",
-                    reason: "orange_hysteresis_timeout",
-                    state: gpsStateRef.current,
-
-                    gpsFreshSec: GPS_FRESH_SEC,
-                    gpsFreezeWindowMs: GPS_FREEZE_WINDOW_MS,
-                    gpsFreezePkDeltaKm: GPS_FREEZE_PK_DELTA_KM,
-                    orangeTimeoutMs: ORANGE_TIMEOUT_MS,
-
-                    // ✅ bonus timing
-                    startedAt: s,
-                    deadlineAt,
-                    elapsedMs,
-                  });
-
-                  setReferenceMode("HORAIRE");
-                } else {
-                  console.log(
-                    "[FT][gps] Hystérésis expirée mais signal redevenu OK ou mode déjà changé -> pas de bascule",
-                    { elapsedMs }
-                  );
-
-                  logTestEvent("gps:orange-hysteresis-expired-no-switch", {
-                    state: gpsStateRef.current,
-                    orangeTimeoutMs: ORANGE_TIMEOUT_MS,
-                    startedAt: s,
-                    deadlineAt,
-                    elapsedMs,
-                    mode: referenceModeRef.current,
-                    gpsHealthy: gpsHealthyRef.current,
-                  });
-                }
-
-                orangeTimeoutRef.current = null;
-                orangeTimeoutStartedAtRef.current = null;
-              }, ORANGE_TIMEOUT_MS);
-
-              orangeTimeoutRef.current = timeoutId;
-            }
-          } else {
-            if (orangeTimeoutRef.current !== null) {
-              const startedAt = orangeTimeoutStartedAtRef.current;
-              const now = Date.now();
-
-              const elapsedMs =
-                typeof startedAt === "number" ? Math.max(0, now - startedAt) : null;
-
-              const remainingMs =
-                typeof elapsedMs === "number"
-                  ? Math.max(0, ORANGE_TIMEOUT_MS - elapsedMs)
-                  : null;
-
-              window.clearTimeout(orangeTimeoutRef.current);
-              orangeTimeoutRef.current = null;
-              orangeTimeoutStartedAtRef.current = null;
-
-              console.log(
-                "[FT][gps] Hystérésis ORANGE annulée car mode déjà HORAIRE / pas en GPS",
-                { elapsedMs, remainingMs }
-              );
-
-              logTestEvent("gps:orange-hysteresis-cancel", {
-                reason: "not_in_gps_mode_anymore",
-                state: gpsStateRef.current,
-                elapsedMs,
-                remainingMs,
-                orangeTimeoutMs: ORANGE_TIMEOUT_MS,
-                mode: referenceModeRef.current,
-              });
-            }
-          }
-
+          // Pas de gare commerciale proche => on ne fait rien (comportement normal)
+          logTestEvent("gps:freeze-red:station-standby-skip", {
+            pk,
+            reason: "no_near_commercial_stop",
+            stationProxKm: STATION_PROX_KM,
+          });
         }
       }
 
@@ -1687,8 +1971,8 @@ export default function FT({ variant = "classic" }: FTProps) {
                 fixedDelay === 0
                   ? "0 min"
                   : fixedDelay > 0
-                    ? `+ ${fixedDelay} min`
-                    : `- ${-fixedDelay} min`;
+                  ? `+ ${fixedDelay} min`
+                  : `- ${-fixedDelay} min`;
 
               window.dispatchEvent(
                 new CustomEvent("lim:schedule-delta", {
@@ -1744,7 +2028,6 @@ export default function FT({ variant = "classic" }: FTProps) {
               );
             }
           }
-
         } else {
           console.log(
             "[FT][gps] pk≈",
@@ -1764,7 +2047,6 @@ export default function FT({ variant = "classic" }: FTProps) {
         orangeTimeoutRef.current = null;
       }
       orangeTimeoutStartedAtRef.current = null;
-
     };
   }, [rawEntries, referenceMode, heuresDetectees]);
 
@@ -2310,7 +2592,7 @@ export default function FT({ variant = "classic" }: FTProps) {
     const horaAssigned =
       eligible && heuresDetecteesCursor < heuresDetectees.length
         ? heuresDetectees[heuresDetecteesCursor]
-        : entry.hora ?? "";
+        : (entry as any).hora ?? "";
     const hora = horaAssigned;
 
     const depNorm = (entry.dependencia ?? "")
@@ -2368,9 +2650,9 @@ export default function FT({ variant = "classic" }: FTProps) {
       heuresDetecteesCursor++;
     }
 
-    const tecnico = entry.tecnico ?? "";
+    const tecnico = (entry as any).tecnico ?? "";
 
-    let conc = entry.conc ?? "";
+    let conc = (entry as any).conc ?? "";
 
     // Heure d'arrivée calculée
     let horaArrivee: string | null = null;
@@ -2416,7 +2698,7 @@ export default function FT({ variant = "classic" }: FTProps) {
       }
     }
 
-    const radio = entry.radio ?? "";
+    const radio = (entry as any).radio ?? "";
     const bloqueo = (entry as any).bloqueo ?? "";
 
     // Arrêt : ligne principale avec COM ou TECN non vide
@@ -2620,7 +2902,6 @@ export default function FT({ variant = "classic" }: FTProps) {
       showArrivalSpacer &&
       !(hasNoteAfter && i < rawEntries.length - 1);
 
-
     if (!isOdd && hasNoteAfter && i < rawEntries.length - 1) {
       // 👇 Remarque rouge (ligne noteOnly) en premier pour les trains PAIRS
       const vmaxClassForNote = csvZoneOpen ? " ft-v-csv-full" : "";
@@ -2691,7 +2972,6 @@ export default function FT({ variant = "classic" }: FTProps) {
 
       renderedRowIndex++;
     }
-
 
     // 2) LIGNE PRINCIPALE (toujours)
     rows.push(
@@ -2793,7 +3073,6 @@ export default function FT({ variant = "classic" }: FTProps) {
         >
           {sitKm}
         </td>
-
 
         {/* Dependencia (surlignable) */}
         <td
@@ -3349,7 +3628,6 @@ export default function FT({ variant = "classic" }: FTProps) {
           padding: 0 4px 2px;
         }
 
-
         .ft-row-spacer .ft-rc-bar,
         .ft-row-spacer .ft-rc-value,
         .ft-row-spacer .ft-v-bar {
@@ -3534,7 +3812,6 @@ export default function FT({ variant = "classic" }: FTProps) {
             <table className="ft-table">
               <tbody>{rows}</tbody>
             </table>
-
           </div>
         </FTScrolling>
       </div>
