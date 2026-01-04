@@ -1718,6 +1718,11 @@ export default function FT({ variant = "classic" }: FTProps) {
       // On bascule en HORAIRE uniquement si GPS = RED (pas de fix OU figeage rouge).
       const isRed = gpsStateRef.current === "RED";
 
+      // ⚠️ IMPORTANT : dans ce handler, on s’appuie sur l’état React `referenceMode`
+      // (fiable car ce useEffect dépend de `referenceMode`) et on garde le ref synchronisé
+      // immédiatement pour éviter les “ratés” entre deux events GPS.
+      referenceModeRef.current = referenceMode;
+
       // On n'utilise plus l'hystérésis ORANGE : si un timer traîne, on le coupe.
       if (orangeTimeoutRef.current !== null) {
         const startedAt = orangeTimeoutStartedAtRef.current;
@@ -1738,13 +1743,17 @@ export default function FT({ variant = "classic" }: FTProps) {
           mode: referenceModeRef.current,
         });
       }
+logTestEvent("gps:mode-check", {
+  gpsState: gpsStateRef.current,
+  referenceModeState: referenceMode,
+  referenceModeRef: referenceModeRef.current,
+});
 
       if (isRed) {
         // RED => bascule immédiate en HORAIRE
-        if (referenceModeRef.current !== "HORAIRE") {
+        if (referenceMode !== "HORAIRE") {
           console.log("[FT][gps] GPS RED -> mode HORAIRE");
 
-          // ✅ Cause exacte de la bascule en HORAIRE (très utile à l’export STOP)
           const redReason = pkIncoherentNow
             ? "gps_red_pk_incoherent"
             : pkFrozenRed
@@ -1762,22 +1771,14 @@ export default function FT({ variant = "classic" }: FTProps) {
             nextMode: "HORAIRE",
             reason: redReason,
             state: gpsStateRef.current,
-
-            // ✅ contexte utile (pour comprendre “pourquoi”)
             reasonCodes,
             hasGpsFix,
             onLine,
             isStale,
             ageSec,
-
             pkRaw: pkRaw ?? null,
             pkUsed: typeof pk === "number" && Number.isFinite(pk) ? pk : null,
-
-            // ✅ diagnostic "PK incohérent"
-            pkIncoherentNow,
-            pkJumpSuspect,
             pkJumpGuardActive: pkJumpGuardActiveRef.current,
-
             gpsFreshSec: GPS_FRESH_SEC,
             gpsFreezeWindowMs: GPS_FREEZE_WINDOW_MS,
             gpsFreezeToRedMs: GPS_FREEZE_TO_RED_MS,
@@ -1785,27 +1786,33 @@ export default function FT({ variant = "classic" }: FTProps) {
             orangeTimeoutMs: ORANGE_TIMEOUT_MS,
           });
 
+          // 🔒 synchro immédiate du ref pour les events suivants
+          referenceModeRef.current = "HORAIRE";
           setReferenceMode("HORAIRE");
         }
       } else {
         // GREEN ou ORANGE => mode GPS
-        if (referenceModeRef.current !== "GPS") {
+        if (referenceMode !== "GPS") {
           console.log("[FT][gps] GPS non-RED -> mode GPS");
+
           logTestEvent("gps:mode-change", {
             prevMode: referenceModeRef.current,
             nextMode: "GPS",
             reason: "gps_not_red",
             state: gpsStateRef.current,
-
             gpsFreshSec: GPS_FRESH_SEC,
             gpsFreezeWindowMs: GPS_FREEZE_WINDOW_MS,
             gpsFreezeToRedMs: GPS_FREEZE_TO_RED_MS,
             gpsFreezePkDeltaKm: GPS_FREEZE_PK_DELTA_KM,
             orangeTimeoutMs: ORANGE_TIMEOUT_MS,
           });
+
+          // 🔒 synchro immédiate du ref pour les events suivants
+          referenceModeRef.current = "GPS";
           setReferenceMode("GPS");
         }
       }
+
 
       // ✅ CAS SPÉCIAL ARRÊT EN GARE :
       // Si on ENTRE en RED suite à PK figé >= 30s, et si le PK figé est proche d'une gare commerciale,

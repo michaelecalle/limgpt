@@ -455,14 +455,18 @@ export default function TitleBar() {
     }
   }, [])
 
-  // Surcouche : GPS vert uniquement si la position est « fraîche »
+   // Surcouche : GPS vert uniquement si la position est « fraîche »
+  // ⚠️ Important : on évite le "rouge" sur simple stale, sinon ça contredit FT.
+  // Rouge = pas de fix. Stale = ORANGE.
   useEffect(() => {
     // Variables fermées sur l'effet : pas de nouveau hook
     let lastFixTs: number | null = null
     let lastHasFix = false
     let lastOnLine = false
 
-    const GPS_FRESH_TIMEOUT_MS = 15_000
+    // Alignement plus proche de FT : FT considère stale très vite (8s).
+    const GPS_FRESH_TIMEOUT_MS = 8_000
+    // Au-delà, on considère "très vieux" mais on reste ORANGE tant qu'il y a eu un fix.
     const GPS_STALE_TIMEOUT_MS = 60_000
 
     const handler = (e: Event) => {
@@ -483,6 +487,7 @@ export default function TitleBar() {
         // Pas de fix → on note juste l'absence de signal
         lastHasFix = false
         lastOnLine = false
+        lastFixTs = null
         return
       }
 
@@ -506,12 +511,16 @@ export default function TitleBar() {
       if (age <= GPS_FRESH_TIMEOUT_MS && lastOnLine) {
         // Fix récent et calé sur la ligne → vert
         setGpsState(2)
+        // (on ne touche pas au PK ici : le handler gps:position principal le gère)
       } else if (age <= GPS_STALE_TIMEOUT_MS) {
-        // Position un peu ancienne → orange
+        // Fix présent mais pas assez frais / pas calé → orange
         setGpsState(1)
+        // Optionnel : on masque le PK quand ce n'est pas vert (évite un PK "trompeur")
+        setGpsPkDisplay(null)
       } else {
-        // Trop ancien → rouge + on efface le PK
-        setGpsState(0)
+        // Très vieux MAIS on a déjà eu un fix : on reste ORANGE (pas rouge),
+        // sinon en conduite tu crois être en "GPS RED" alors que FT peut être ORANGE.
+        setGpsState(1)
         setGpsPkDisplay(null)
       }
     }, 1000)
@@ -521,6 +530,7 @@ export default function TitleBar() {
       window.clearInterval(intervalId)
     }
   }, [])
+
 
   // ----- GPS : démarrage / arrêt du watchPosition -----
   useEffect(() => {
