@@ -510,7 +510,7 @@ export default function FT({ variant = "classic" }: FTProps) {
       const standby = !!detail.standby;
 
       // 🎯 Cas spécial : 1er clic sur Play -> Standby initial + sélection 1ʳᵉ ligne
-      if (enabled && !initialStandbyDoneRef.current) {
+      if (enabled && standby && !initialStandbyDoneRef.current) {
         const idx = firstNonNoteIndexRef.current;
         if (typeof idx === "number" && idx >= 0) {
           initialStandbyDoneRef.current = true;
@@ -1660,6 +1660,23 @@ export default function FT({ variant = "classic" }: FTProps) {
         const prevState = gpsStateRef.current;
         gpsStateRef.current = nextState;
 
+                // 🔊 Source de vérité GPS (FT) -> TitleBar
+        window.dispatchEvent(
+          new CustomEvent("lim:gps-state", {
+            detail: {
+              state: nextState, // "RED" | "ORANGE" | "GREEN"
+              reasonCodes,
+              pk: typeof pk === "number" && Number.isFinite(pk) ? pk : null,
+              pkRaw: pkRaw ?? null,
+              hasFix: hasGpsFix,
+              onLine,
+              isStale,
+              ageSec,
+            },
+          })
+        );
+
+
         logTestEvent("gps:state-change", {
           prevState,
           nextState,
@@ -1961,10 +1978,16 @@ logTestEvent("gps:mode-check", {
               recalibrateFromRowRef.current = idx;
 
               // 2) On recalcule le delta réel (maintenant - heure utilisée)
+              // ✅ cohérent avec le "play" : prend les secondes et arrondit à la minute la plus proche
               const now = new Date();
-              const nowMinutes = now.getHours() * 60 + now.getMinutes();
 
-              const fixedDelay = nowMinutes - usedMinutes;
+              const nowMinutes = now.getHours() * 60 + now.getMinutes();
+              const nowTotalSec = nowMinutes * 60 + now.getSeconds();
+
+              const usedTotalSec = usedMinutes * 60;
+              const deltaSec = nowTotalSec - usedTotalSec;
+
+              const fixedDelay = Math.round(deltaSec / 60);
 
               // 3) On recale la base interne du mode horaire sur cette ligne
               autoScrollBaseRef.current = {
@@ -1972,6 +1995,7 @@ logTestEvent("gps:mode-check", {
                 firstHoraMin: usedMinutes,
                 fixedDelay,
               };
+
 
               // 4) On met à jour immédiatement le delta affiché dans la TitleBar
               const text =

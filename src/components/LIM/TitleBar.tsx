@@ -67,16 +67,15 @@ export default function TitleBar() {
     dist_m?: number | null
   } | null>(null)
 
-  // Seuils de "fraîcheur" du GPS (utilisés dans les étapes suivantes)
-  const GPS_FRESH_TIMEOUT_MS = 30_000 // > 30 s sans nouvelle position → GPS considéré "pas frais"
-  const GPS_FROZEN_SKM_EPS = 0.005 // variation minimale de s_km pour considérer qu'on progresse
-
-  // Mémoire de la dernière mise à jour GPS (pour détecter une position figée)
-  const lastGpsUpdateRef = useRef<number | null>(null)
-  const lastGpsSkmRef = useRef<number | null>(null)
-
-  // Texte affiché dans le badge GPS quand on est calé sur la ligne (PK estimé)
+  // Texte affiché dans le badge GPS (donné par FT via lim:gps-state)
   const [gpsPkDisplay, setGpsPkDisplay] = useState<string | null>(null)
+
+    // ✅ ref miroir pour lire l'état GPS courant dans d'autres handlers
+  const gpsStateRef = useRef<0 | 1 | 2>(0)
+
+  useEffect(() => {
+    gpsStateRef.current = gpsState
+  }, [gpsState])
 
   useEffect(() => {
     window.dispatchEvent(
@@ -92,6 +91,30 @@ export default function TitleBar() {
       })
     )
   }, [testRecording])
+
+  // ----- NUMÉRO DE TRAIN + TYPE + COMPOSITION -----
+  const [trainDisplay, setTrainDisplay] = useState<string | undefined>(() => {
+    const w = window as any
+    const last: LIMFields | undefined = w.__limLastParsed
+    const raw = last?.trenPadded ?? last?.tren
+    return toTitleNumber(raw)
+  })
+
+  const [trainType, setTrainType] = useState<string | undefined>(() => {
+    const w = window as any
+    const last: any = w.__limLastParsed || {}
+    const rawType = last?.type
+    return rawType ? String(rawType) : undefined
+  })
+
+  const [trainComposition, setTrainComposition] = useState<string | undefined>(() => {
+    const w = window as any
+    const last: any = w.__limLastParsed || {}
+    const rawComp = last?.composicion ?? last?.unit
+    return rawComp ? String(rawComp) : undefined
+  })
+
+  const [folded, setFolded] = useState(false)
 
   // ✅ Auto-démarrage du test à l'ouverture de l'app
   useEffect(() => {
@@ -244,30 +267,6 @@ export default function TitleBar() {
     if (inputRef.current) inputRef.current.value = ''
   }
 
-  // ----- NUMÉRO DE TRAIN + TYPE + COMPOSITION -----
-  const [trainDisplay, setTrainDisplay] = useState<string | undefined>(() => {
-    const w = window as any
-    const last: LIMFields | undefined = w.__limLastParsed
-    const raw = last?.trenPadded ?? last?.tren
-    return toTitleNumber(raw)
-  })
-
-  const [trainType, setTrainType] = useState<string | undefined>(() => {
-    const w = window as any
-    const last: any = w.__limLastParsed || {}
-    const rawType = last?.type
-    return rawType ? String(rawType) : undefined
-  })
-
-  const [trainComposition, setTrainComposition] = useState<string | undefined>(() => {
-    const w = window as any
-    const last: any = w.__limLastParsed || {}
-    const rawComp = last?.composicion ?? last?.unit
-    return rawComp ? String(rawComp) : undefined
-  })
-
-  const [folded, setFolded] = useState(false)
-
   useEffect(() => {
     const onParsed = (e: Event) => {
       const ce = e as CustomEvent
@@ -349,6 +348,9 @@ export default function TitleBar() {
       // - autoScroll = false & hourlyMode = false => mode horaire OFF (rouge)
       setHourlyMode(enabled || standby)
       setStandbyMode(standby)
+
+      // ✅ Le Play/Pause affiché doit refléter l'état REEL de FT
+      setAutoScroll(enabled)
     }
 
     window.addEventListener('lim:hourly-mode', handler as EventListener)
@@ -371,6 +373,41 @@ export default function TitleBar() {
     window.addEventListener('lim:reference-mode', handler as EventListener)
     return () => {
       window.removeEventListener('lim:reference-mode', handler as EventListener)
+    }
+  }, [])
+
+  // ✅ GPS (source de vérité FT) : la TitleBar affiche UNIQUEMENT l'état calculé dans FT
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const ce = e as CustomEvent
+      const state = ce?.detail?.state as 'RED' | 'ORANGE' | 'GREEN' | undefined
+      const pk = ce?.detail?.pk as number | null | undefined
+
+      if (state === 'RED') {
+        setGpsState(0)
+        setGpsPkDisplay(null)
+        return
+      }
+
+      if (state === 'ORANGE') {
+        setGpsState(1)
+        setGpsPkDisplay(null)
+        return
+      }
+
+      if (state === 'GREEN') {
+        setGpsState(2)
+        if (typeof pk === 'number' && Number.isFinite(pk)) {
+          setGpsPkDisplay(pk.toFixed(1))
+        } else {
+          setGpsPkDisplay(null)
+        }
+      }
+    }
+
+    window.addEventListener('lim:gps-state', handler as EventListener)
+    return () => {
+      window.removeEventListener('lim:gps-state', handler as EventListener)
     }
   }, [])
 
@@ -399,139 +436,6 @@ export default function TitleBar() {
     }
   }, [])
 
-  // écoute directe des événements gps:position pour mettre à jour l'icône GPS + PK affiché
-  useEffect(() => {
-    const handler = (e: Event) => {
-      const ce = e as CustomEvent<any>
-      const detail = ce.detail || {}
-
-      const hasFix =
-        typeof (detail as any).lat === 'number' &&
-        typeof (detail as any).lon === 'number'
-      const onLine = !!(detail as any).onLine
-      const pkRaw = (detail as any).pk as number | string | null | undefined
-
-      // pas de fix GPS → état 0 (rouge) + on efface le texte PK
-      if (!hasFix) {
-        setGpsState(0)
-        setGpsPkDisplay(null)
-        return
-      }
-
-      // 💾 mémorisation d'une position GPS "valide" (pour la fraîcheur)
-      const ts =
-        typeof (detail as any).timestamp === 'number'
-          ? (detail as any).timestamp
-          : Date.now()
-      lastGpsUpdateRef.current = ts
-
-      const sKmRaw = (detail as any).s_km as number | string | null | undefined
-      if (sKmRaw != null) {
-        const sVal = typeof sKmRaw === 'number' ? sKmRaw : Number(sKmRaw)
-        if (Number.isFinite(sVal)) {
-          lastGpsSkmRef.current = sVal
-        }
-      }
-
-      // fix présent : vert si calé sur la ligne, orange sinon
-      setGpsState(onLine ? 2 : 1)
-
-      // si position calée sur la ligne + PK dispo → on l'affiche
-      if (onLine && pkRaw != null) {
-        const pkNum = typeof pkRaw === 'number' ? pkRaw : Number(pkRaw)
-        if (Number.isFinite(pkNum)) {
-          setGpsPkDisplay(pkNum.toFixed(1)) // ex: 621.123
-          return
-        }
-      }
-
-      // hors ligne ou PK invalide → pas d'affichage numérique
-      setGpsPkDisplay(null)
-    }
-
-    window.addEventListener('gps:position', handler as EventListener)
-    return () => {
-      window.removeEventListener('gps:position', handler as EventListener)
-    }
-  }, [])
-
-   // Surcouche : GPS vert uniquement si la position est « fraîche »
-  // ⚠️ Important : on évite le "rouge" sur simple stale, sinon ça contredit FT.
-  // Rouge = pas de fix. Stale = ORANGE.
-  useEffect(() => {
-    // Variables fermées sur l'effet : pas de nouveau hook
-    let lastFixTs: number | null = null
-    let lastHasFix = false
-    let lastOnLine = false
-
-    // Alignement plus proche de FT : FT considère stale très vite (8s).
-    const GPS_FRESH_TIMEOUT_MS = 8_000
-    // Au-delà, on considère "très vieux" mais on reste ORANGE tant qu'il y a eu un fix.
-    const GPS_STALE_TIMEOUT_MS = 60_000
-
-    const handler = (e: Event) => {
-      const ce = e as CustomEvent<any>
-      const detail = ce.detail || {}
-
-      const hasFix =
-        typeof (detail as any).lat === 'number' &&
-        typeof (detail as any).lon === 'number'
-      const onLine = !!(detail as any).onLine
-
-      const ts =
-        typeof (detail as any).timestamp === 'number'
-          ? (detail as any).timestamp
-          : Date.now()
-
-      if (!hasFix) {
-        // Pas de fix → on note juste l'absence de signal
-        lastHasFix = false
-        lastOnLine = false
-        lastFixTs = null
-        return
-      }
-
-      lastHasFix = true
-      lastOnLine = onLine
-      lastFixTs = ts
-    }
-
-    window.addEventListener('gps:position', handler as EventListener)
-
-    const intervalId = window.setInterval(() => {
-      if (!lastHasFix || !lastFixTs) {
-        // Aucun fix récent connu → rouge + on efface le PK
-        setGpsState(0)
-        setGpsPkDisplay(null)
-        return
-      }
-
-      const age = Date.now() - lastFixTs
-
-      if (age <= GPS_FRESH_TIMEOUT_MS && lastOnLine) {
-        // Fix récent et calé sur la ligne → vert
-        setGpsState(2)
-        // (on ne touche pas au PK ici : le handler gps:position principal le gère)
-      } else if (age <= GPS_STALE_TIMEOUT_MS) {
-        // Fix présent mais pas assez frais / pas calé → orange
-        setGpsState(1)
-        // Optionnel : on masque le PK quand ce n'est pas vert (évite un PK "trompeur")
-        setGpsPkDisplay(null)
-      } else {
-        // Très vieux MAIS on a déjà eu un fix : on reste ORANGE (pas rouge),
-        // sinon en conduite tu crois être en "GPS RED" alors que FT peut être ORANGE.
-        setGpsState(1)
-        setGpsPkDisplay(null)
-      }
-    }, 1000)
-
-    return () => {
-      window.removeEventListener('gps:position', handler as EventListener)
-      window.clearInterval(intervalId)
-    }
-  }, [])
-
-
   // ----- GPS : démarrage / arrêt du watchPosition -----
   useEffect(() => {
     // au démontage de la TitleBar, on coupe le GPS si besoin
@@ -548,7 +452,6 @@ export default function TitleBar() {
     }
     if (typeof navigator === 'undefined' || !('geolocation' in navigator)) {
       console.warn('[TitleBar] Geolocation non disponible')
-      setGpsState(0)
       // log échec démarrage GPS
       logTestEvent('gps:watch:start:failed', { reason: 'no_geolocation' })
       return
@@ -570,7 +473,6 @@ export default function TitleBar() {
 
         if (!gpsPkReady) {
           // GPS OK mais moteur PK pas prêt
-          setGpsState(1)
           logTestEvent('gps:position:noPkEngine', {
             lat: latitude,
             lon: longitude,
@@ -581,7 +483,6 @@ export default function TitleBar() {
 
         const proj = projectGpsToPk(latitude, longitude)
         if (!proj) {
-          setGpsState(1)
           console.log(
             `[GPS] lat=${latitude.toFixed(6)} lon=${longitude.toFixed(
               6
@@ -595,7 +496,7 @@ export default function TitleBar() {
           return
         }
 
-        const { pk, s_km, distance_m } = proj
+        const { pk, s_km, distance_m, nearestIdx, nearestLat, nearestLon } = proj
         const dist = distance_m ?? null
         const onLine = dist != null && dist <= 200
 
@@ -608,8 +509,6 @@ export default function TitleBar() {
           dist_m: dist,
         }
 
-        setGpsState(onLine ? 2 : 1)
-
         // log de la position projetée
         logTestEvent('gps:position', {
           lat: latitude,
@@ -619,9 +518,14 @@ export default function TitleBar() {
           s_km: s_km ?? null,
           distance_m: dist,
           onLine,
+
+          // DEBUG : point ruban retenu par gpsPkEngine (sans impact)
+          nearestIdx: typeof nearestIdx === 'number' ? nearestIdx : null,
+          nearestLat: typeof nearestLat === 'number' ? nearestLat : null,
+          nearestLon: typeof nearestLon === 'number' ? nearestLon : null,
         })
 
-        // 🔊 diffusion globale de la position GPS projetée
+        // 🔊 diffusion globale de la position GPS projetée (pour FT)
         window.dispatchEvent(
           new CustomEvent('gps:position', {
             detail: {
@@ -633,9 +537,15 @@ export default function TitleBar() {
               distance_m: dist,
               onLine,
               timestamp: Date.now(),
+
+              // DEBUG : point ruban retenu
+              nearestIdx: typeof nearestIdx === 'number' ? nearestIdx : null,
+              nearestLat: typeof nearestLat === 'number' ? nearestLat : null,
+              nearestLon: typeof nearestLon === 'number' ? nearestLon : null,
             },
           })
         )
+
 
         console.log(
           `[GPS] lat=${latitude.toFixed(6)} lon=${longitude.toFixed(
@@ -647,7 +557,6 @@ export default function TitleBar() {
       },
       (err) => {
         console.error('[TitleBar] Erreur GPS', err)
-        setGpsState(0)
 
         logTestEvent('gps:watch:error', {
           code: (err as any)?.code ?? null,
@@ -662,8 +571,6 @@ export default function TitleBar() {
     )
 
     gpsWatchIdRef.current = id
-    // on part du principe : signal présent mais pas encore forcément « calé »
-    setGpsState(1)
   }
 
   function stopGpsWatch() {
@@ -678,8 +585,6 @@ export default function TitleBar() {
     }
     gpsWatchIdRef.current = null
     gpsLastInfoRef.current = null
-    setGpsState(0)
-    setGpsPkDisplay(null)
     console.log('[TitleBar] Arrêt watchPosition GPS')
   }
 
@@ -801,10 +706,8 @@ export default function TitleBar() {
 
                   // 2) démarrer / arrêter le suivi GPS
                   if (next) {
-                    // passage en mode "lecture" → on démarre le watchPosition
                     startGpsWatch()
                   } else {
-                    // pause / arrêt → on coupe le GPS
                     stopGpsWatch()
                   }
                 }}
@@ -833,11 +736,9 @@ export default function TitleBar() {
                 )}
               </button>
 
-
               {/* GPS */}
               <button
                 type="button"
-                // indicateur uniquement : plus de changement d'état manuel
                 className={`
                   relative h-7 px-3 rounded-full text-xs font-semibold bg-white dark:bg-zinc-900 transition cursor-default
                   ${

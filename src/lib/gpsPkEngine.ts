@@ -2,6 +2,11 @@ export type GpsPkProjection = {
   pk: number | null
   s_km: number | null
   distance_m: number | null
+
+  // DEBUG (sans impact fonctionnel) : point du ruban retenu
+  nearestIdx?: number
+  nearestLat?: number
+  nearestLon?: number
 }
 
 import { RIBBON_POINTS } from './ligne050_ribbon'
@@ -138,5 +143,10 @@ export function projectGpsToPk(lat: number, lon: number): GpsPkProjection | null
     pk,
     s_km,
     distance_m,
+
+    // DEBUG (sans impact) : point du ruban choisi
+    nearestIdx: bestIdx,
+    nearestLat: nearest.lat,
+    nearestLon: nearest.lon,
   }
 }
