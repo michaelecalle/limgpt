@@ -453,12 +453,18 @@ export default function FT({ variant = "classic" }: FTProps) {
 
   const gpsStateRef = React.useRef<GpsState>("RED");
 
+  // 🔊 Emission continue vers TitleBar (évite PK "bloqué" quand l'état reste GREEN)
+  const lastGpsStateEmitPkRef = React.useRef<number | null>(null);
+  const lastGpsStateEmitAtRef = React.useRef<number>(0);
+  const GPS_STATE_EMIT_MIN_INTERVAL_MS = 800; // throttle (ms)
+
   // Pour détecter une position "fraîche"
   const lastGpsSampleAtRef = React.useRef<number>(0);
 
   // Pour détecter un PK figé
   const lastPkRef = React.useRef<number | null>(null);
   const lastPkChangeAtRef = React.useRef<number>(0);
+
 
   // Réglages (ajustables)
   const GPS_FRESH_SEC = 8; // si l'échantillon est plus vieux -> pas "green"
@@ -620,70 +626,35 @@ export default function FT({ variant = "classic" }: FTProps) {
       const now = new Date();
       const nowMin = now.getHours() * 60 + now.getMinutes();
 
-      const mainRows = document.querySelectorAll<HTMLTableRowElement>(
-        "table.ft-table tbody tr.ft-row-main"
-      );
-      if (!mainRows.length) return null;
-
+      // première minute dispo (heure réelle ou théorique) sur la portion affichée
       let firstHoraMin: number | null = null;
-      for (let i = 0; i < mainRows.length; i++) {
-        const tr = mainRows[i];
-        const horaSpan = tr.querySelector<HTMLSpanElement>(
-          "td:nth-child(6) .ft-hora-depart"
-        );
-        if (!horaSpan) continue;
-        const horaText = horaSpan.textContent?.trim() || "";
-        if (!horaText) continue;
-        const rowMin = toMinutes(horaText);
-        if (!Number.isNaN(rowMin)) {
-          firstHoraMin = rowMin;
+      for (let i = 0; i < horaTheoMinutesByIndex.length; i++) {
+        const m = horaTheoMinutesByIndex[i];
+        if (typeof m === "number" && Number.isFinite(m)) {
+          firstHoraMin = m;
           break;
         }
       }
 
       if (firstHoraMin == null) return null;
 
-      // 🔒 on fige l’avance/retard de départ (arrondi)
       const fixedDelay = computeFixedDelayMinutes(now, firstHoraMin);
-
       return { realMin: nowMin, firstHoraMin, fixedDelay };
     };
+
 
     // Base "mode Standby" : à partir de la ligne sélectionnée
     const captureBaseFromRowIndex = (rowIndex: number) => {
       const now = new Date();
       const nowMin = now.getHours() * 60 + now.getMinutes();
 
-      const mainRows = document.querySelectorAll<HTMLTableRowElement>(
-        "table.ft-table tbody tr.ft-row-main"
-      );
-      if (!mainRows.length) return null;
+      const rowMin = horaTheoMinutesByIndex[rowIndex];
+      if (typeof rowMin !== "number" || !Number.isFinite(rowMin)) return null;
 
-      let targetRow: HTMLTableRowElement | null = null;
-      for (let i = 0; i < mainRows.length; i++) {
-        const tr = mainRows[i];
-        const attr = tr.getAttribute("data-ft-row");
-        const idx = attr ? parseInt(attr, 10) : i;
-        if (idx === rowIndex) {
-          targetRow = tr;
-          break;
-        }
-      }
-      if (!targetRow) return null;
-
-      const horaSpan = targetRow.querySelector<HTMLSpanElement>(
-        "td:nth-child(6) .ft-hora-depart"
-      );
-      const horaText = horaSpan?.textContent?.trim() || "";
-      if (!horaText) return null;
-
-      const rowMin = toMinutes(horaText);
-      if (Number.isNaN(rowMin)) return null;
-
-      // 🔒 avance/retard arrondi sur la ligne choisie
       const fixedDelay = computeFixedDelayMinutes(now, rowMin);
       return { realMin: nowMin, firstHoraMin: rowMin, fixedDelay };
     };
+
 
     // ✅ Choix de la base : soit ligne sélectionnée (Standby), soit première ligne
     const forcedIndex = recalibrateFromRowRef.current;
@@ -724,40 +695,35 @@ export default function FT({ variant = "classic" }: FTProps) {
         const targetMin = toMinutes(forcedHHMM);
         if (Number.isNaN(targetMin)) return;
 
-        let exactMatchDomIndex = -1;
-        let lastPastDomIndex = -1;
+        let exactDataIndex: number | null = null;
+        let lastPastDataIndex: number | null = null;
+        let firstValidDataIndex: number | null = null;
 
         for (let i = 0; i < mainRows.length; i++) {
           const tr = mainRows[i];
-          const horaSpan = tr.querySelector<HTMLSpanElement>(
-            "td:nth-child(6) .ft-hora-depart"
-          );
-          if (!horaSpan) continue;
-          const horaText = horaSpan.textContent?.trim() || "";
-          if (!horaText) continue;
-          const rowMin = toMinutes(horaText);
-          if (Number.isNaN(rowMin)) continue;
+          const dataIndexAttr = tr.getAttribute("data-ft-row");
+          const dataIndex = dataIndexAttr ? parseInt(dataIndexAttr, 10) : NaN;
+          if (!Number.isFinite(dataIndex)) continue;
 
-          if (rowMin === targetMin && exactMatchDomIndex === -1) {
-            exactMatchDomIndex = i;
+          const rowMin = horaTheoMinutesByIndex[dataIndex];
+          if (typeof rowMin !== "number" || !Number.isFinite(rowMin)) continue;
+
+          if (firstValidDataIndex == null) firstValidDataIndex = dataIndex;
+
+          if (rowMin === targetMin && exactDataIndex == null) {
+            exactDataIndex = dataIndex;
           }
           if (rowMin <= targetMin) {
-            lastPastDomIndex = i;
+            lastPastDataIndex = dataIndex;
           }
         }
 
-        const domIndex =
-          exactMatchDomIndex !== -1
-            ? exactMatchDomIndex
-            : lastPastDomIndex !== -1
-            ? lastPastDomIndex
-            : 0;
+        const picked =
+          exactDataIndex ?? lastPastDataIndex ?? firstValidDataIndex ?? 0;
 
-        const tr = mainRows[domIndex];
-        const dataIndexAttr = tr.getAttribute("data-ft-row");
-        const dataIndex = dataIndexAttr ? parseInt(dataIndexAttr, 10) : domIndex;
-        setActiveRowIndex(dataIndex);
+        setActiveRowIndex(picked);
         return;
+
       }
 
       const base = autoScrollBaseRef.current;
@@ -875,46 +841,40 @@ export default function FT({ variant = "classic" }: FTProps) {
       }
 
       // on cherche la ligne FT la plus proche de cette heure effective
-      const mainRows = document.querySelectorAll<HTMLTableRowElement>(
+          const mainRows = document.querySelectorAll<HTMLTableRowElement>(
         "table.ft-table tbody tr.ft-row-main"
       );
       if (!mainRows.length) return;
 
-      let exactMatchDomIndex = -1;
-      let lastPastDomIndex = -1;
+      let exactDataIndex: number | null = null;
+      let lastPastDataIndex: number | null = null;
+      let firstValidDataIndex: number | null = null;
 
       for (let i = 0; i < mainRows.length; i++) {
         const tr = mainRows[i];
-        const horaSpan = tr.querySelector<HTMLSpanElement>(
-          "td:nth-child(6) .ft-hora-depart"
-        );
-        if (!horaSpan) continue;
-        const horaText = horaSpan.textContent?.trim() || "";
-        if (!horaText) continue;
-        const rowMin = toMinutes(horaText);
-        if (Number.isNaN(rowMin)) continue;
+        const dataIndexAttr = tr.getAttribute("data-ft-row");
+        const dataIndex = dataIndexAttr ? parseInt(dataIndexAttr, 10) : NaN;
+        if (!Number.isFinite(dataIndex)) continue;
 
-        if (rowMin === effectiveMin && exactMatchDomIndex === -1) {
-          exactMatchDomIndex = i;
+        const rowMin = horaTheoMinutesByIndex[dataIndex];
+        if (typeof rowMin !== "number" || !Number.isFinite(rowMin)) continue;
+
+        if (firstValidDataIndex == null) firstValidDataIndex = dataIndex;
+
+        if (rowMin === effectiveMin && exactDataIndex == null) {
+          exactDataIndex = dataIndex;
         }
         if (rowMin <= effectiveMin) {
-          lastPastDomIndex = i;
+          lastPastDataIndex = dataIndex;
         }
       }
 
-      const domIndex =
-        exactMatchDomIndex !== -1
-          ? exactMatchDomIndex
-          : lastPastDomIndex !== -1
-          ? lastPastDomIndex
-          : 0;
-
-      const tr = mainRows[domIndex];
-      const dataIndexAttr = tr.getAttribute("data-ft-row");
-      const dataIndex = dataIndexAttr ? parseInt(dataIndexAttr, 10) : domIndex;
+      const dataIndex =
+        exactDataIndex ?? lastPastDataIndex ?? firstValidDataIndex ?? 0;
 
       // 👉 Le moteur horaire ne pilote la ligne active que si on est en mode HORAIRE
       if (referenceModeRef.current === "HORAIRE") {
+
         setActiveRowIndex(dataIndex);
       }
 
@@ -1391,15 +1351,16 @@ export default function FT({ variant = "classic" }: FTProps) {
         lastCoherentPk != null &&
         lastCoherentTs > 0
       ) {
-        const dtSec = Math.max(0, (sampleTs - lastCoherentTs) / 1000);
+        const dtSecRaw = Math.max(0, (sampleTs - lastCoherentTs) / 1000);
+        // ✅ On évite le “trou” à 0.99s : on détecte quand même,
+        // en bornant juste le dt utilisé pour la tolérance.
+        const dtSec = Math.max(dtSecRaw, GPS_JUMP_MIN_ELAPSED_SEC);
 
-        if (dtSec >= GPS_JUMP_MIN_ELAPSED_SEC) {
-          const maxDeltaKm = GPS_JUMP_BASE_TOLERANCE_KM + speedKmPerSec * dtSec;
-          const dPk = Math.abs(pk - lastCoherentPk);
+        const maxDeltaKm = GPS_JUMP_BASE_TOLERANCE_KM + speedKmPerSec * dtSec;
+        const dPk = Math.abs(pk - lastCoherentPk);
 
-          if (dPk > maxDeltaKm) {
-            pkJumpSuspect = true;
-          }
+        if (dPk > maxDeltaKm) {
+          pkJumpSuspect = true;
         }
       }
 
@@ -1656,17 +1617,37 @@ export default function FT({ variant = "classic" }: FTProps) {
       const enteredRedFromPkIncoherent =
         prevGpsState !== "RED" && nextState === "RED" && pkIncoherentNow === true;
 
-      if (gpsStateRef.current !== nextState) {
-        const prevState = gpsStateRef.current;
-        gpsStateRef.current = nextState;
+      const emitGpsStateToTitleBar = (forced: boolean) => {
+        // throttle léger pour éviter le spam si watchPosition "mitraille"
+        const now = nowTs;
 
-                // 🔊 Source de vérité GPS (FT) -> TitleBar
+        const pkFinite =
+          typeof pk === "number" && Number.isFinite(pk) ? pk : null;
+
+        // On n'affiche un PK que si GREEN (TitleBar attend ça)
+        const pkForUi = nextState === "GREEN" ? pkFinite : null;
+
+        const lastEmitAt = lastGpsStateEmitAtRef.current;
+        const lastEmitPk = lastGpsStateEmitPkRef.current;
+
+        const pkChanged =
+          pkForUi != null &&
+          (lastEmitPk == null || Math.abs(pkForUi - lastEmitPk) >= 0.05); // seuil ~50m
+
+        const timeOk = now - lastEmitAt >= GPS_STATE_EMIT_MIN_INTERVAL_MS;
+
+        // forced = changement d'état, sinon seulement si PK change ou throttle OK
+        if (!forced && !pkChanged && !timeOk) return;
+
+        lastGpsStateEmitAtRef.current = now;
+        lastGpsStateEmitPkRef.current = pkForUi;
+
         window.dispatchEvent(
           new CustomEvent("lim:gps-state", {
             detail: {
               state: nextState, // "RED" | "ORANGE" | "GREEN"
               reasonCodes,
-              pk: typeof pk === "number" && Number.isFinite(pk) ? pk : null,
+              pk: pkForUi,
               pkRaw: pkRaw ?? null,
               hasFix: hasGpsFix,
               onLine,
@@ -1675,7 +1656,14 @@ export default function FT({ variant = "classic" }: FTProps) {
             },
           })
         );
+      };
 
+      if (gpsStateRef.current !== nextState) {
+        const prevState = gpsStateRef.current;
+        gpsStateRef.current = nextState;
+
+        // 🔊 Source de vérité GPS (FT) -> TitleBar (FORCÉ si changement d'état)
+        emitGpsStateToTitleBar(true);
 
         logTestEvent("gps:state-change", {
           prevState,
@@ -1723,6 +1711,10 @@ export default function FT({ variant = "classic" }: FTProps) {
             reasonCodes,
           });
         }
+      }
+      // 🔄 Même si l'état ne change pas, on met à jour le PK affiché en TitleBar quand on est GREEN
+      if (nextState === "GREEN") {
+        emitGpsStateToTitleBar(false);
       }
 
       const isHealthy = nextState === "GREEN";
@@ -2482,6 +2474,103 @@ logTestEvent("gps:mode-check", {
     const pad = (n: number) => n.toString().padStart(2, "0");
     return `${pad(hh)}:${pad(mm)}`;
   }
+  // ===== Horaires théoriques (interpolation PK ↔ temps) =====
+  // Objectif : donner une minute "théorique" à toutes les lignes principales entre deux heures connues,
+  // sans rien afficher, pour permettre un scroll horaire plus fin (à la minute).
+  const horaTheoMinutesByIndex = useMemo(() => {
+    const mins: Array<number | null> = new Array(rawEntries.length).fill(null);
+
+    const isEligibleLocal = (e: FTEntry) => {
+      if ((e as any).isNoteOnly) return false;
+      const s = (e.pk ?? "").toString().trim();
+      const d = (e.dependencia ?? "").toString().trim();
+      return s.length > 0 && d.length > 0;
+    };
+
+    // 1) Minutes "ancre" = heures réellement connues (heuresDetectees ou entry.hora)
+    let cursor = 0;
+    for (let i = 0; i < rawEntries.length; i++) {
+      const e = rawEntries[i];
+      if ((e as any).isNoteOnly) continue;
+
+      const eligible = isEligibleLocal(e);
+
+      const horaStr =
+        eligible && cursor < heuresDetectees.length
+          ? heuresDetectees[cursor]
+          : ((e as any).hora ?? "");
+
+      if (eligible && cursor < heuresDetectees.length) cursor++;
+
+      mins[i] = parseHoraToMinutes(horaStr);
+    }
+
+    // 2) Interpolation entre deux ancres (PK + minutes)
+    const out = [...mins];
+
+    const getPkNum = (idx: number): number | null => {
+      const pkStr = rawEntries[idx]?.pk;
+      const pkNum =
+        typeof pkStr === "string" || typeof pkStr === "number" ? Number(pkStr) : NaN;
+      return Number.isFinite(pkNum) ? pkNum : null;
+    };
+
+    let lastAnchorIndex: number | null = null;
+
+    for (let i = 0; i < rawEntries.length; i++) {
+      if ((rawEntries[i] as any)?.isNoteOnly) continue;
+
+      const m = mins[i];
+      if (m == null) continue;
+
+      const pkI = getPkNum(i);
+      if (pkI == null) continue;
+
+      if (lastAnchorIndex == null) {
+        lastAnchorIndex = i;
+        continue;
+      }
+
+      const a = lastAnchorIndex;
+      const pkA = getPkNum(a);
+      const mA = mins[a];
+
+      if (pkA == null || mA == null) {
+        lastAnchorIndex = i;
+        continue;
+      }
+
+      const pkB = pkI;
+      const mB = m;
+
+      const denom = pkA - pkB;
+      if (denom === 0) {
+        lastAnchorIndex = i;
+        continue;
+      }
+
+      for (let k = a + 1; k < i; k++) {
+        if ((rawEntries[k] as any)?.isNoteOnly) continue;
+        if (out[k] != null) continue; // déjà une heure réelle
+
+        const pkK = getPkNum(k);
+        if (pkK == null) continue;
+
+        let t = (pkA - pkK) / denom; // 0 -> à A, 1 -> à B
+        if (t < 0) t = 0;
+        if (t > 1) t = 1;
+
+        const mk = mA + t * (mB - mA);
+
+        // Le scroll horaire est à la minute => minute entière
+        out[k] = Math.round(mk);
+      }
+
+      lastAnchorIndex = i;
+    }
+
+    return out;
+  }, [rawEntries, heuresDetectees]);
 
   // Gestion RC
   let rcCurrentSegmentId = 0;
@@ -3130,7 +3219,13 @@ logTestEvent("gps:mode-check", {
             (shouldHighlightRow ? " ft-highlight-cell" : "")
           }
         >
-          {hora && <span className="ft-hora-depart">{hora}</span>}
+          {hora ? (
+            <span className="ft-hora-depart">{hora}</span>
+          ) : typeof horaTheoMinutesByIndex[i] === "number" ? (
+            <span className="ft-hora-theo">
+              {formatMinutesToHora(horaTheoMinutesByIndex[i] as number)}
+            </span>
+          ) : null}
         </td>
 
         <td className="ft-td">{tecnico}</td>
@@ -3610,6 +3705,16 @@ logTestEvent("gps:mode-check", {
         }
         .ft-hora-depart {
           font-weight: 600;
+        }
+        /* Heures calculées (interpolées) : affichage gris + italique */
+        .ft-hora-theo {
+          font-style: italic;
+          color: #6b7280;
+          opacity: 0.85;
+        }
+        .dark .ft-hora-theo {
+          color: #9ca3af;
+          opacity: 0.9;
         }
 
         .ft-rednote-line {
