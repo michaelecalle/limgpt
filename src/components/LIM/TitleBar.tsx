@@ -919,8 +919,8 @@ export default function TitleBar() {
           >
             {pdfMode === 'blue' && <IconFile />}
             {pdfMode === 'blue' && 'Importer PDF'}
-            {pdfMode === 'green' && <span className="font-bold">MODE NORMAL</span>}
-            {pdfMode === 'red' && <span className="font-bold">MODE SECOURS</span>}
+            {pdfMode === 'green' && <span className="font-bold">NORMAL</span>}
+            {pdfMode === 'red' && <span className="font-bold">SECOURS</span>}
           </button>
 
           {/* STOP (interruption du test) */}

@@ -465,6 +465,195 @@ export default function FT({ variant = "classic" }: FTProps) {
   const lastPkRef = React.useRef<number | null>(null);
   const lastPkChangeAtRef = React.useRef<number>(0);
 
+    // ===== Watchdog GPS : re-évalue l'état même s'il n'y a plus d'events gps:position =====
+  useEffect(() => {
+    const WATCHDOG_INTERVAL_MS = 1000;
+
+    const tick = () => {
+      const last = lastGpsPositionRef.current;
+      if (!last) return;
+
+      const nowTs = Date.now();
+
+      // timestamp de référence du dernier échantillon connu
+      const sampleTs =
+        lastGpsSampleAtRef.current > 0
+          ? lastGpsSampleAtRef.current
+          : typeof (last as any).timestamp === "number"
+          ? (last as any).timestamp
+          : 0;
+
+      if (!sampleTs) return;
+
+      const hasGpsFix =
+        typeof (last as any).lat === "number" && typeof (last as any).lon === "number";
+
+      const onLine = !!(last as any).onLine;
+
+      const ageSec = Math.max(0, (nowTs - sampleTs) / 1000);
+      const isStale = ageSec > GPS_FRESH_SEC;
+
+      const pkRaw = (last as any).pk as number | null | undefined;
+      const pkFinite =
+        typeof pkRaw === "number" && Number.isFinite(pkRaw) ? pkRaw : null;
+
+      const pkFreezeElapsedMs =
+        hasGpsFix &&
+        onLine &&
+        pkFinite != null &&
+        lastPkChangeAtRef.current > 0
+          ? nowTs - lastPkChangeAtRef.current
+          : 0;
+
+      const pkFrozenOrange = pkFreezeElapsedMs >= GPS_FREEZE_WINDOW_MS;
+      const pkFrozenRed = pkFreezeElapsedMs >= GPS_FREEZE_TO_RED_MS;
+
+      // si le garde-fou "saut de PK" est actif, on reste en RED
+      const pkIncoherentNow = pkJumpGuardActiveRef.current === true;
+
+      const reasonCodes: string[] = [];
+      if (!hasGpsFix) reasonCodes.push("no_fix");
+      if (hasGpsFix && !onLine) reasonCodes.push("off_line");
+      if (hasGpsFix && onLine && isStale) reasonCodes.push("stale_fix");
+      if (pkIncoherentNow) reasonCodes.push("pk_jump_guard");
+      if (pkFrozenRed) reasonCodes.push("pk_frozen_red");
+      else if (pkFrozenOrange) reasonCodes.push("pk_frozen_orange");
+      reasonCodes.push("watchdog");
+
+      let nextState: GpsState = "RED";
+      if (!hasGpsFix) {
+        nextState = "RED";
+      } else if (pkIncoherentNow) {
+        nextState = "RED";
+      } else if (pkFrozenRed) {
+        nextState = "RED";
+      } else if (!onLine || isStale || pkFrozenOrange) {
+        nextState = "ORANGE";
+      } else {
+        nextState = "GREEN";
+      }
+
+      const emitGpsState = (forced: boolean) => {
+        const now = nowTs;
+
+        // On n'affiche un PK que si GREEN
+        const pkForUi = nextState === "GREEN" ? pkFinite : null;
+
+        const lastEmitAt = lastGpsStateEmitAtRef.current;
+        const lastEmitPk = lastGpsStateEmitPkRef.current;
+
+        const pkChanged =
+          pkForUi != null &&
+          (lastEmitPk == null || Math.abs(pkForUi - lastEmitPk) >= 0.05); // ~50m
+
+        const timeOk = now - lastEmitAt >= GPS_STATE_EMIT_MIN_INTERVAL_MS;
+
+        if (!forced && !pkChanged && !timeOk) return;
+
+        lastGpsStateEmitAtRef.current = now;
+        lastGpsStateEmitPkRef.current = pkForUi;
+
+        window.dispatchEvent(
+          new CustomEvent("lim:gps-state", {
+            detail: {
+              state: nextState,
+              reasonCodes,
+              pk: pkForUi,
+              pkRaw: pkRaw ?? null,
+              hasFix: hasGpsFix,
+              onLine,
+              isStale,
+              ageSec,
+            },
+          })
+        );
+      };
+
+      const prevState = gpsStateRef.current;
+
+      // 1) Machine d'état : si changement -> log + émission forcée
+      if (prevState !== nextState) {
+        gpsStateRef.current = nextState;
+
+        emitGpsState(true);
+
+        logTestEvent("gps:state-change:watchdog", {
+          prevState,
+          nextState,
+          reasonCodes,
+          ageSec,
+          pk: pkFinite,
+          pkRaw: pkRaw ?? null,
+          onLine,
+          hasFix: hasGpsFix,
+          isStale,
+
+          // paramètres utiles
+          gpsFreshSec: GPS_FRESH_SEC,
+          gpsFreezeWindowMs: GPS_FREEZE_WINDOW_MS,
+          gpsFreezeToRedMs: GPS_FREEZE_TO_RED_MS,
+          gpsFreezePkDeltaKm: GPS_FREEZE_PK_DELTA_KM,
+          orangeTimeoutMs: ORANGE_TIMEOUT_MS,
+        });
+      } else {
+        // 2) Même état : si GREEN, on peut quand même rafraîchir le PK affiché
+        if (nextState === "GREEN") {
+          emitGpsState(false);
+        }
+      }
+
+      // 3) Application de la règle de bascule HORAIRE/GPS même sans events GPS
+      const isRed = gpsStateRef.current === "RED";
+      const currentMode = referenceModeRef.current;
+
+      if (isRed) {
+        if (currentMode !== "HORAIRE") {
+          referenceModeRef.current = "HORAIRE";
+          setReferenceMode("HORAIRE");
+
+          logTestEvent("gps:mode-change:watchdog", {
+            prevMode: currentMode,
+            nextMode: "HORAIRE",
+            reason: "gps_red_watchdog",
+            state: gpsStateRef.current,
+            reasonCodes,
+            ageSec,
+            pkRaw: pkRaw ?? null,
+            pkUsed: pkFinite,
+            onLine,
+            hasFix: hasGpsFix,
+            isStale,
+          });
+        }
+      } else {
+        if (currentMode !== "GPS") {
+          referenceModeRef.current = "GPS";
+          setReferenceMode("GPS");
+
+          logTestEvent("gps:mode-change:watchdog", {
+            prevMode: currentMode,
+            nextMode: "GPS",
+            reason: "gps_not_red_watchdog",
+            state: gpsStateRef.current,
+            reasonCodes,
+            ageSec,
+            pkRaw: pkRaw ?? null,
+            pkUsed: pkFinite,
+            onLine,
+            hasFix: hasGpsFix,
+            isStale,
+          });
+        }
+      }
+    };
+
+    const id = window.setInterval(tick, WATCHDOG_INTERVAL_MS);
+
+    return () => {
+      window.clearInterval(id);
+    };
+  }, []);
+
 
   // Réglages (ajustables)
   const GPS_FRESH_SEC = 8; // si l'échantillon est plus vieux -> pas "green"
@@ -2475,25 +2664,21 @@ logTestEvent("gps:mode-check", {
     return `${pad(hh)}:${pad(mm)}`;
   }
   // ===== Horaires théoriques (interpolation PK ↔ temps) =====
-  // Objectif : donner une minute "théorique" à toutes les lignes principales entre deux heures connues,
-  // sans rien afficher, pour permettre un scroll horaire plus fin (à la minute).
+  // ✅ Règle : entre A -> B, on interpole de :
+  // - départ(A)
+  // - arrivée(B) si elle existe, sinon départ(B)
   const horaTheoMinutesByIndex = useMemo(() => {
-    const mins: Array<number | null> = new Array(rawEntries.length).fill(null);
+    // 1) Reconstruire les heures de DÉPART par index (même logique que l'affichage)
+    const departMinutesByIndex: Array<number | null> = new Array(rawEntries.length).fill(null);
+    const departHoraTextByIndex: Array<string | null> = new Array(rawEntries.length).fill(null);
 
-    const isEligibleLocal = (e: FTEntry) => {
-      if ((e as any).isNoteOnly) return false;
-      const s = (e.pk ?? "").toString().trim();
-      const d = (e.dependencia ?? "").toString().trim();
-      return s.length > 0 && d.length > 0;
-    };
-
-    // 1) Minutes "ancre" = heures réellement connues (heuresDetectees ou entry.hora)
     let cursor = 0;
+
     for (let i = 0; i < rawEntries.length; i++) {
       const e = rawEntries[i];
       if ((e as any).isNoteOnly) continue;
 
-      const eligible = isEligibleLocal(e);
+      const eligible = isEligible(e);
 
       const horaStr =
         eligible && cursor < heuresDetectees.length
@@ -2502,11 +2687,48 @@ logTestEvent("gps:mode-check", {
 
       if (eligible && cursor < heuresDetectees.length) cursor++;
 
-      mins[i] = parseHoraToMinutes(horaStr);
+      const horaText = typeof horaStr === "string" ? horaStr.trim() : "";
+      departHoraTextByIndex[i] = horaText.length > 0 ? horaText : null;
+      departMinutesByIndex[i] = parseHoraToMinutes(horaText);
     }
 
-    // 2) Interpolation entre deux ancres (PK + minutes)
-    const out = [...mins];
+    // 2) Calculer les minutes d'ARRIVÉE pour B si possible (arrivée = départ - COM)
+    const arrivalMinutesByIndex: Array<number | null> = new Array(rawEntries.length).fill(null);
+
+    for (let i = 0; i < rawEntries.length; i++) {
+      const e = rawEntries[i];
+      if ((e as any).isNoteOnly) continue;
+
+      const depMin = departMinutesByIndex[i];
+      const horaText = departHoraTextByIndex[i];
+      if (depMin == null || !horaText) continue;
+
+      const depNorm = (e.dependencia ?? "")
+        .toUpperCase()
+        .replace(/\s+/g, " ")
+        .trim();
+
+      const isVoyageursStop =
+        depNorm === "BARCELONA SANTS" ||
+        depNorm === "LA SAGRERA AV" ||
+        depNorm === "GIRONA" ||
+        depNorm === "FIGUERES-VILAFANT";
+
+      const isOriginOrTerminus = i === firstNonNoteIndex || i === lastNonNoteIndex;
+
+      if (!isVoyageursStop || isOriginOrTerminus) continue;
+
+      const codesPourHeure = codesCParHeure[horaText] ?? [];
+      const firstCode = codesPourHeure[0];
+      const n = Number(firstCode);
+
+      if (Number.isFinite(n) && n > 0) {
+        arrivalMinutesByIndex[i] = depMin - n;
+      }
+    }
+
+    // 3) Interpoler entre ancres consécutives (PK + minute de départ)
+    const out: Array<number | null> = [...departMinutesByIndex];
 
     const getPkNum = (idx: number): number | null => {
       const pkStr = rawEntries[idx]?.pk;
@@ -2518,13 +2740,12 @@ logTestEvent("gps:mode-check", {
     let lastAnchorIndex: number | null = null;
 
     for (let i = 0; i < rawEntries.length; i++) {
-      if ((rawEntries[i] as any)?.isNoteOnly) continue;
+      const e = rawEntries[i];
+      if ((e as any).isNoteOnly) continue;
 
-      const m = mins[i];
-      if (m == null) continue;
-
-      const pkI = getPkNum(i);
-      if (pkI == null) continue;
+      const depB = departMinutesByIndex[i];
+      const pkB = getPkNum(i);
+      if (depB == null || pkB == null) continue;
 
       if (lastAnchorIndex == null) {
         lastAnchorIndex = i;
@@ -2532,18 +2753,18 @@ logTestEvent("gps:mode-check", {
       }
 
       const a = lastAnchorIndex;
+      const depA = departMinutesByIndex[a];
       const pkA = getPkNum(a);
-      const mA = mins[a];
 
-      if (pkA == null || mA == null) {
+      if (depA == null || pkA == null) {
         lastAnchorIndex = i;
         continue;
       }
 
-      const pkB = pkI;
-      const mB = m;
+      // ✅ fin de segment = arrivée(B) si dispo, sinon départ(B)
+      const endB = arrivalMinutesByIndex[i] ?? depB;
 
-      const denom = pkA - pkB;
+      const denom = pkB - pkA;
       if (denom === 0) {
         lastAnchorIndex = i;
         continue;
@@ -2551,26 +2772,32 @@ logTestEvent("gps:mode-check", {
 
       for (let k = a + 1; k < i; k++) {
         if ((rawEntries[k] as any)?.isNoteOnly) continue;
-        if (out[k] != null) continue; // déjà une heure réelle
+        if (out[k] != null) continue;
 
         const pkK = getPkNum(k);
         if (pkK == null) continue;
 
-        let t = (pkA - pkK) / denom; // 0 -> à A, 1 -> à B
+        let t = (pkK - pkA) / denom; // 0 à A, 1 à B
         if (t < 0) t = 0;
         if (t > 1) t = 1;
 
-        const mk = mA + t * (mB - mA);
+        const mk = depA + t * (endB - depA);
 
-        // Le scroll horaire est à la minute => minute entière
-        out[k] = Math.round(mk);
+        // ✅ garde-fou : ne jamais dépasser les bornes du segment (arrondi inclus)
+        const lo = Math.min(depA, endB);
+        const hi = Math.max(depA, endB);
+        const mkClamped = Math.min(Math.max(mk, lo), hi);
+
+        out[k] = Math.round(mkClamped);
       }
+
 
       lastAnchorIndex = i;
     }
 
     return out;
-  }, [rawEntries, heuresDetectees]);
+  }, [rawEntries, heuresDetectees, codesCParHeure]);
+
 
   // Gestion RC
   let rcCurrentSegmentId = 0;
