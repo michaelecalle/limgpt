@@ -82,12 +82,23 @@ export function getCurrentTestEvents(): TestLogEvent[] {
  * - Retourne true si un fichier a été déclenché.
  * - Retourne false si aucun événement n'est disponible.
  */
-export function exportTestLog(): boolean {
+/**
+ * Construit le fichier log (contenu + Blob + nom) sans déclencher de téléchargement.
+ * Utile pour : upload distant au STOP, replay, etc.
+ */
+export function buildTestLogFile(): {
+  ok: boolean
+  sessionId?: string
+  filename?: string
+  text?: string
+  blob?: Blob
+} {
   if (events.length === 0) {
-    return false
+    return { ok: false }
   }
 
-  const sessionId = currentSessionId ?? new Date().toISOString().replace(/[:.]/g, '-')
+  const sessionId =
+    currentSessionId ?? new Date().toISOString().replace(/[:.]/g, '-')
 
   const headerLines: string[] = []
   headerLines.push(`# LIM test log`)
@@ -101,19 +112,38 @@ export function exportTestLog(): boolean {
   const bodyLines = events.map((e) => JSON.stringify(e))
   const text = headerLines.join('\n') + bodyLines.join('\n') + '\n'
 
+  // Le nom de fichier doit rester stable et explicite
+  const filename = `LIM_testlog_${sessionId}.log`
+
+  // En environnement navigateur seulement
+  if (typeof Blob === 'undefined') {
+    return { ok: false, sessionId, filename, text }
+  }
+
+  const blob = new Blob([text], { type: 'text/plain;charset=utf-8;' })
+
+  return { ok: true, sessionId, filename, text, blob }
+}
+
+/**
+ * Exporte le log courant dans un fichier .log (téléchargement navigateur).
+ * - Retourne true si un fichier a été déclenché.
+ * - Retourne false si aucun événement n'est disponible.
+ */
+export function exportTestLog(): boolean {
+  const built = buildTestLogFile()
+  if (!built.ok || !built.blob || !built.filename) return false
+
   if (typeof document === 'undefined') {
     // environnement non navigateur (tests, etc.) -> pas de téléchargement
     return false
   }
 
-  const blob = new Blob([text], { type: 'text/plain;charset=utf-8;' })
-  const url = URL.createObjectURL(blob)
+  const url = URL.createObjectURL(built.blob)
   const a = document.createElement('a')
-
-  const filename = `LIM_testlog_${sessionId}.log`
-
   a.href = url
-  a.download = filename
+  a.download = built.filename
+
   document.body.appendChild(a)
   a.click()
   document.body.removeChild(a)
@@ -121,6 +151,7 @@ export function exportTestLog(): boolean {
 
   return true
 }
+
 
 /**
  * Nettoie le label pour qu'il soit compatible avec un nom de fichier.

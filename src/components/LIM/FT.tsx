@@ -765,6 +765,31 @@ export default function FT({ variant = "classic" }: FTProps) {
     };
   }, []);
 
+    // ✅ Replay / Simulation : sélection et recalage "déterministes" sans clic DOM
+  // Le player peut injecter : window.dispatchEvent(new CustomEvent("ft:standby:set", { detail: { rowIndex } }))
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const ce = e as CustomEvent<any>;
+      const d = ce?.detail ?? {};
+
+      const raw = d.rowIndex;
+      const rowIndex =
+        typeof raw === "number" ? raw : parseInt(String(raw ?? ""), 10);
+
+      if (!Number.isFinite(rowIndex)) return;
+
+      // Sélection visuelle + base de recalage (comme un clic sur la ligne)
+      setSelectedRowIndex(rowIndex);
+      recalibrateFromRowRef.current = rowIndex;
+    };
+
+    window.addEventListener("ft:standby:set", handler as EventListener);
+    return () => {
+      window.removeEventListener("ft:standby:set", handler as EventListener);
+    };
+  }, []);
+
+
   // quand le mode auto-scroll (play) s'allume/s'éteint
   useEffect(() => {
     if (!autoScrollEnabled) {
@@ -3330,7 +3355,7 @@ logTestEvent("gps:mode-check", {
         }
         key={`main-${i}`}
         data-ft-row={i}
-        onClick={() => {
+onClick={() => {
           // En mode GPS, le clic sur une ligne est inopérant (pas de Standby / recalage)
           if (referenceModeRef.current === "GPS") {
             return;
@@ -3344,6 +3369,15 @@ logTestEvent("gps:mode-check", {
           // 🟢 Cas 1 : on est à l'arrêt (autoScrollEnabled === false)
           // ET on reclique sur LA MÊME ligne déjà sélectionnée => on relance le mode horaire
           if (!autoScrollEnabled && isAlreadySelected) {
+            // ✅ log rejouable : relance depuis standby + recalage sur cette ligne
+            logTestEvent("ui:standby:resume", {
+              rowIndex: i,
+              hora,
+              pk: entry?.pk ?? null,
+              dependencia: entry?.dependencia ?? null,
+              source: "ft:row-click",
+            });
+
             // on recale explicitement la base sur cette ligne
             recalibrateFromRowRef.current = i;
 
@@ -3362,6 +3396,16 @@ logTestEvent("gps:mode-check", {
           setSelectedRowIndex(i);
           recalibrateFromRowRef.current = i;
 
+          // ✅ log rejouable : sélection / entrée standby (préparation recalage)
+          logTestEvent("ui:standby:enter", {
+            rowIndex: i,
+            hora,
+            pk: entry?.pk ?? null,
+            dependencia: entry?.dependencia ?? null,
+            autoScrollWasEnabled: autoScrollEnabled,
+            source: "ft:row-click",
+          });
+
           // 🔴 Si le mode horaire était en cours, on le coupe et on bascule en standby (icône 🕑 orange)
           if (autoScrollEnabled) {
             window.dispatchEvent(
@@ -3377,6 +3421,7 @@ logTestEvent("gps:mode-check", {
             );
           }
         }}
+
       >
         {(() => {
           renderedRowIndex++;

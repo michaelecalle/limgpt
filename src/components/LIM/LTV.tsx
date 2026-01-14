@@ -1,4 +1,6 @@
 import React, { useEffect, useState, useRef } from "react"
+import { logTestEvent } from "../../lib/testLogger"
+
 
 /**
  * LTV — Tableau principal + module de recadrage NEEDS_CROP
@@ -61,6 +63,23 @@ type LTVEventDetail = {
 const LTV: React.FC = () => {
   // --- état venant du parseur LTV (ltvParser.ts)
   const [ltvMode, setLtvMode] = useState<LTVMode | "">("")
+
+    // ✅ Mode simulation (replay) : LTV suit l'état global via sim:enable
+  const [simulationEnabled, setSimulationEnabled] = useState(false)
+
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const ce = e as CustomEvent
+      const enabled = !!ce?.detail?.enabled
+      setSimulationEnabled(enabled)
+    }
+
+    window.addEventListener("sim:enable", handler as EventListener)
+    return () => {
+      window.removeEventListener("sim:enable", handler as EventListener)
+    }
+  }, [])
+
 
   // Deux candidates "historiques" envoyées par le parseur en mode DISPLAY_DIRECT
   const [previewImage, setPreviewImage] = useState<string | undefined>(
@@ -473,6 +492,15 @@ const LTV: React.FC = () => {
 
   // --- Réinitialisation manuelle (NEEDS_CROP)
   const resetView = () => {
+    // ✅ Simulation : on bloque les commandes de l'app (seul le player agit)
+    if (simulationEnabled) {
+      logTestEvent("ui:blocked", {
+        control: "ltvResetCrop",
+        source: "ltv",
+      })
+      return
+    }
+
     setZoom(1)
     setPanX(0)
     setPanY(0)
@@ -486,10 +514,26 @@ const LTV: React.FC = () => {
       right: 90,
     })
     setIsCropping(true)
+
+    // ✅ log rejouable : reset du recadrage
+    logTestEvent("ltv:crop:reset", {
+      source: "needs_crop",
+    })
   }
+
+
 
   // --- retour en édition après validation (NEEDS_CROP)
   const reopenCrop = () => {
+    // ✅ Simulation : on bloque les commandes de l'app (seul le player agit)
+    if (simulationEnabled) {
+      logTestEvent("ui:blocked", {
+        control: "ltvReopenCrop",
+        source: "ltv",
+      })
+      return
+    }
+
     setIsCropping(true)
     setZoom(1)
     setPanX(0)
@@ -499,8 +543,18 @@ const LTV: React.FC = () => {
     setAnchorY(null)
   }
 
+
   // --- Validation du recadrage manuel (NEEDS_CROP)
   const confirmCrop = () => {
+    // ✅ Simulation : on bloque les commandes de l'app (seul le player agit)
+    if (simulationEnabled) {
+      logTestEvent("ui:blocked", {
+        control: "ltvConfirmCrop",
+        source: "ltv",
+      })
+      return
+    }
+
     if (!previewImgRef.current || !previewImage) return
 
     const imgEl = previewImgRef.current
@@ -555,6 +609,18 @@ const LTV: React.FC = () => {
       setFinalCroppedUrl(outDataUrl)
       setIsCropping(false)
 
+      // ✅ log rejouable : résultat du recadrage (coordonnées normalisées)
+      logTestEvent("ltv:crop:set", {
+        unit: "norm",
+        rect: {
+          x: cropBox.left / 100,
+          y: cropBox.top / 100,
+          w: (cropBox.right - cropBox.left) / 100,
+          h: (cropBox.bottom - cropBox.top) / 100,
+        },
+        source: "needs_crop",
+      })
+
       // vue neutre post-validation
       setZoom(1)
       setPanX(0)
@@ -565,6 +631,7 @@ const LTV: React.FC = () => {
     }
     imgObj.src = previewImage
   }
+
 
   // --- Toggle entre previewImageDataUrl et altPreviewImageDataUrl en DISPLAY_DIRECT
   const toggleDisplayDirectImage = () => {
@@ -581,23 +648,67 @@ const LTV: React.FC = () => {
 
   // --- Validation du choix en DISPLAY_DIRECT (fige l'image affichée)
   const confirmDisplayDirectChoice = () => {
-    setLockedDisplayDirect(true)
-  }
+    // ✅ Simulation : on bloque les commandes de l'app (seul le player agit)
+    if (simulationEnabled) {
+      logTestEvent("ui:blocked", {
+        control: "ltvDisplayLock",
+        source: "ltv",
+      })
+      return
+    }
 
-  // Sélection / désélection d'une image candidate par son index
-  const toggleCandidateSelection = (index: number) => {
-    setSelectedImageIndices((prev) => {
-      if (prev.includes(index)) {
-        // si déjà sélectionnée → on la retire
-        return prev.filter((i) => i !== index)
-      }
-      // sinon → on l'ajoute en fin de liste (ordre de sélection)
-      return [...prev, index]
+    setLockedDisplayDirect(true)
+
+    // ✅ log rejouable : validation du choix DISPLAY_DIRECT
+    logTestEvent("ltv:display:lock", {
+      selected: Array.isArray(selectedImageIndices) ? selectedImageIndices : [],
+      source: "display_direct",
     })
   }
 
+
+  // Sélection / désélection d'une image candidate par son index
+  const toggleCandidateSelection = (index: number) => {
+    // ✅ Simulation : on bloque les commandes de l'app (seul le player agit)
+    if (simulationEnabled) {
+      logTestEvent("ui:blocked", {
+        control: "ltvSelectCandidate",
+        source: "ltv",
+      })
+      return
+    }
+
+    // ⚠️ Important : pas de log dans le "setState updater"
+    // (sinon doublons possibles en dev / StrictMode).
+    const wasSelected = selectedImageIndices.includes(index)
+    const next = wasSelected
+      ? selectedImageIndices.filter((i) => i !== index)
+      : [...selectedImageIndices, index]
+
+    // ✅ log rejouable : sélection/désélection d'une candidate
+    logTestEvent("ltv:candidate:set", {
+      index,
+      selected: !wasSelected,
+      selectedIndices: next, // état après action
+      source: "tap",
+    })
+
+    setSelectedImageIndices(next)
+  }
+
+
+
   // --- Basculer manuellement depuis DISPLAY_DIRECT vers NEEDS_CROP
   const switchToManualCropFromDisplayDirect = () => {
+    // ✅ Simulation : on bloque les commandes de l'app (seul le player agit)
+    if (simulationEnabled) {
+      logTestEvent("ui:blocked", {
+        control: "ltvSwitchToManualCrop",
+        source: "ltv",
+      })
+      return
+    }
+
     // priorité : bande de page complète fournie via debugBands
     const baseImage = pageBandImage || previewImage || finalCroppedUrl
 
@@ -639,6 +750,16 @@ const LTV: React.FC = () => {
 
   // Demande au parseur de déplacer la bande LTV vers le haut ou le bas
   const requestBandShift = (direction: "up" | "down") => {
+    // ✅ Simulation : on bloque les commandes de l'app (seul le player agit)
+    if (simulationEnabled) {
+      logTestEvent("ui:blocked", {
+        control: "ltvRequestBandShift",
+        direction,
+        source: "ltv",
+      })
+      return
+    }
+
     if (ltvMode !== "NEEDS_CROP") return
 
     const DEFAULT_BAND_HEIGHT = 0.2 // 20 % de la page
@@ -649,8 +770,7 @@ const LTV: React.FC = () => {
     const minTop = 0
     const maxTop = 1 - DEFAULT_BAND_HEIGHT
 
-    let nextTop =
-      direction === "up" ? currentTop - STEP : currentTop + STEP
+    let nextTop = direction === "up" ? currentTop - STEP : currentTop + STEP
 
     if (nextTop < minTop) nextTop = minTop
     if (nextTop > maxTop) nextTop = maxTop
@@ -666,6 +786,7 @@ const LTV: React.FC = () => {
       })
     )
   }
+
 
   // ------------------------------------------------------------------
   // Rendu du tbody selon le mode
@@ -1207,20 +1328,36 @@ const LTV: React.FC = () => {
                           padding: "6px 10px",
                           border: "2px solid #000",
                           boxShadow: "0 4px 8px rgba(0,0,0,0.4)",
-                          cursor:
-                            safeIndex > 0 ? "pointer" : "not-allowed",
+                          cursor: safeIndex > 0 ? "pointer" : "not-allowed",
                           minWidth: "80px",
                           lineHeight: 1.2,
                         }}
                         disabled={safeIndex <= 0}
                         onClick={() => {
+                          // ✅ Simulation : on bloque les commandes de l'app (seul le player agit)
+                          if (simulationEnabled) {
+                            logTestEvent("ui:blocked", {
+                              control: "ltvPrevImage",
+                              source: "ltv",
+                            })
+                            return
+                          }
+
                           if (safeIndex <= 0) return
                           const nextIndex = safeIndex - 1
                           setSelectedImageIndex(nextIndex)
-                          const nextUrl =
-                            candidateImages[nextIndex] || currentUrl
+                          const nextUrl = candidateImages[nextIndex] || currentUrl
                           setFinalCroppedUrl(nextUrl || null)
+
+                          // ✅ log rejouable : navigation entre candidates
+                          logTestEvent("ltv:navigate", {
+                            dir: "prev",
+                            from: safeIndex,
+                            to: nextIndex,
+                            source: "button",
+                          })
                         }}
+
                       >
                         ◀︎ Préc.
                       </button>
@@ -1246,24 +1383,40 @@ const LTV: React.FC = () => {
                           border: "2px solid #000",
                           boxShadow: "0 4px 8px rgba(0,0,0,0.4)",
                           cursor:
-                            safeIndex < totalCandidates - 1
-                              ? "pointer"
-                              : "not-allowed",
+                            safeIndex < totalCandidates - 1 ? "pointer" : "not-allowed",
                           minWidth: "80px",
                           lineHeight: 1.2,
                         }}
                         disabled={safeIndex >= totalCandidates - 1}
                         onClick={() => {
+                          // ✅ Simulation : on bloque les commandes de l'app (seul le player agit)
+                          if (simulationEnabled) {
+                            logTestEvent("ui:blocked", {
+                              control: "ltvNextImage",
+                              source: "ltv",
+                            })
+                            return
+                          }
+
                           if (safeIndex >= totalCandidates - 1) return
                           const nextIndex = safeIndex + 1
                           setSelectedImageIndex(nextIndex)
-                          const nextUrl =
-                            candidateImages[nextIndex] || currentUrl
+                          const nextUrl = candidateImages[nextIndex] || currentUrl
                           setFinalCroppedUrl(nextUrl || null)
+
+                          // ✅ log rejouable : navigation entre candidates
+                          logTestEvent("ltv:navigate", {
+                            dir: "next",
+                            from: safeIndex,
+                            to: nextIndex,
+                            source: "button",
+                          })
                         }}
+
                       >
                         Suiv. ▶︎
                       </button>
+
                     </>
                   )}
 
@@ -1369,13 +1522,82 @@ const LTV: React.FC = () => {
   return (
     <section className="ltv-wrap">
       <style>{`
-        .ltv-wrap { background: transparent; }
+        .ltv-wrap { 
+          background: transparent; 
+          position: relative; /* ✅ ancre l’overlay Replay */
+        }
+
+        .ltv-replay-overlay {
+          position: absolute;
+          left: 8px;
+          right: 8px;
+          top: 8px;
+          z-index: 99999;
+          pointer-events: auto;
+        }
+
+        .ltv-replay-card {
+          border: 2px solid #000;
+          background: rgba(255, 255, 255, 0.92);
+          color: #000;
+          border-radius: 12px;
+          padding: 8px 10px;
+          box-shadow: 0 8px 18px rgba(0,0,0,0.35);
+          font-size: 12px;
+          line-height: 1.2;
+        }
+
+        .dark .ltv-replay-card {
+          border: 2px solid #fff;
+          background: rgba(0, 0, 0, 0.72);
+          color: #fff;
+        }
+
+        .ltv-replay-row {
+          display: flex;
+          gap: 8px;
+          align-items: center;
+          flex-wrap: wrap;
+        }
+
+        .ltv-replay-row + .ltv-replay-row {
+          margin-top: 6px;
+        }
+
+        .ltv-replay-input {
+          flex: 1;
+          min-width: 260px;
+          padding: 6px 8px;
+          border-radius: 8px;
+          border: 2px solid currentColor;
+          background: transparent;
+          color: inherit;
+          font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+          font-size: 11px;
+        }
+
+        .ltv-replay-btn {
+          padding: 6px 10px;
+          border-radius: 8px;
+          border: 2px solid currentColor;
+          background: transparent;
+          color: inherit;
+          font-weight: 700;
+          cursor: pointer;
+          user-select: none;
+        }
+
+        .ltv-replay-meta {
+          opacity: 0.85;
+          font-size: 11px;
+        }
 
         .ltv-table {
           border-collapse: collapse;
           width: 100%;
           table-layout: fixed;
           border: 2px solid #000;
+
           background: #fff;
           font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
           color: #000;
@@ -1589,6 +1811,84 @@ const LTV: React.FC = () => {
           .ltv-table caption { font-size: 14px; padding: 3px 0; }
         }
       `}</style>
+      {/* ✅ Replay overlay : visible uniquement en simulation */}
+      {simulationEnabled && (
+        <div className="ltv-replay-overlay">
+          <div className="ltv-replay-card">
+            <div className="ltv-replay-row">
+              <strong>REPLAY</strong>
+              <span className="ltv-replay-meta">
+                (simulation ON — commandes utilisateur bloquées)
+              </span>
+            </div>
+
+            <div className="ltv-replay-row">
+              <input
+                className="ltv-replay-input"
+                value={(window as any).__limgptReplayUrl ?? ""}
+                placeholder="URL log (ex: https://radioequinoxe.com/limgpt/replay_get.php?f=....pdf)"
+                onChange={(e) => {
+                  // ✅ Simulation : autorisé (c’est le panneau du player)
+                  ;(window as any).__limgptReplayUrl = e.target.value
+                }}
+              />
+
+              <button
+                className="ltv-replay-btn"
+                onClick={async () => {
+                  const url = String((window as any).__limgptReplayUrl ?? "").trim()
+                  if (!url) return
+                  try {
+                    await (window as any).__limgptReplay?.loadUrl(url)
+                  } catch (err) {
+                    console.warn("[replay-overlay] load failed", err)
+                  }
+                }}
+              >
+                Load
+              </button>
+
+              <button
+                className="ltv-replay-btn"
+                onClick={() => (window as any).__limgptReplay?.play()}
+              >
+                Play
+              </button>
+
+              <button
+                className="ltv-replay-btn"
+                onClick={() => (window as any).__limgptReplay?.pause()}
+              >
+                Pause
+              </button>
+
+              <button
+                className="ltv-replay-btn"
+                onClick={() => (window as any).__limgptReplay?.stop()}
+              >
+                Stop
+              </button>
+            </div>
+
+            <div className="ltv-replay-row">
+              <span className="ltv-replay-meta">
+                status: {(window as any).__limgptReplay?.status?.() ?? "n/a"}
+              </span>
+              <span className="ltv-replay-meta">
+                cursor:{" "}
+                {(() => {
+                  try {
+                    const c = (window as any).__limgptReplay?.cursor?.()
+                    return c ? `${c.idx} @ ${Math.round(c.tMs)}ms` : "n/a"
+                  } catch {
+                    return "n/a"
+                  }
+                })()}
+              </span>
+            </div>
+          </div>
+        </div>
+      )}
 
       <table className="ltv-table">
         <caption>LTV</caption>

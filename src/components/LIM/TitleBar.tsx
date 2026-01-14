@@ -8,6 +8,10 @@ import {
 
 import { initGpsPkEngine, projectGpsToPk } from '../../lib/gpsPkEngine'
 
+import { getOcrOnlineEnabled, setOcrOnlineEnabled } from '../../lib/ocrSettings'
+import { uploadPdfToSynology } from '../../lib/synologyUpload'
+
+
 type LIMFields = {
   tren?: string
   trenPadded?: string
@@ -45,7 +49,90 @@ export default function TitleBar() {
   )
   const [standbyMode, setStandbyMode] = useState(false)
   const [pdfMode, setPdfMode] = useState<'blue' | 'green' | 'red'>('blue')
+    // ----- TRAITEMENT PDF (spinner + garde-fou timeout) -----
+  const [pdfProcessing, setPdfProcessing] = useState(false)
+  const pdfProcessingTimerRef = useRef<number | null>(null)
+
+  const PDF_PROCESSING_TIMEOUT_MS = 45_000
+
+  const PDF_PROCESSING_FAIL_MESSAGE =
+    "Le traitement du PDF n’a pas abouti. Réessayez ou passez en mode SECOURS (affichage PDF brut)."
+
+  const stopPdfProcessing = () => {
+    if (pdfProcessingTimerRef.current != null) {
+      window.clearTimeout(pdfProcessingTimerRef.current)
+      pdfProcessingTimerRef.current = null
+    }
+    setPdfProcessing(false)
+  }
+
+  const startPdfProcessing = () => {
+    // reset propre
+    stopPdfProcessing()
+    setPdfProcessing(true)
+
+    // garde-fou : si rien ne “termine” le traitement
+    pdfProcessingTimerRef.current = window.setTimeout(() => {
+      pdfProcessingTimerRef.current = null
+      setPdfProcessing(false)
+      window.alert(PDF_PROCESSING_FAIL_MESSAGE)
+    }, PDF_PROCESSING_TIMEOUT_MS)
+  }
+
   const [testRecording, setTestRecording] = useState(false)
+
+    // ✅ Mode test (ON par défaut pour l’instant) : pilote l’affichage du STOP + l’enregistrement
+  const [testModeEnabled, setTestModeEnabled] = useState(true)
+
+    // ✅ Mode simulation (replay) — pilotage global via event sim:enable
+  const [simulationEnabled, setSimulationEnabled] = useState(false)
+
+  useEffect(() => {
+    window.dispatchEvent(
+      new CustomEvent('sim:enable', { detail: { enabled: simulationEnabled } })
+    )
+  }, [simulationEnabled])
+
+
+  // ✅ OCR online (ON par défaut) : persistance localStorage + pilote le routage OCR (ocrRouter)
+  const [ocrOnlineEnabled, setOcrOnlineEnabledState] = useState(() =>
+    getOcrOnlineEnabled()
+  )
+
+  // Sync : tout changement UI -> localStorage (source de vérité pour ocrRouter)
+  useEffect(() => {
+    setOcrOnlineEnabled(ocrOnlineEnabled)
+  }, [ocrOnlineEnabled])
+
+
+    // ----- UI : spinner pendant traitement PDF (étape 1 : juste l'affichage) -----
+  const [pdfLoading, setPdfLoading] = useState(false)
+
+    // ----- GARDE-FOU : timeout si traitement PDF bloqué -----
+  const pdfLoadingTimerRef = useRef<number | null>(null)
+
+  const PDF_LOADING_TIMEOUT_MS = 45_000
+  const PDF_LOADING_FAIL_MESSAGE =
+    "Le traitement du PDF n’a pas abouti (délai dépassé). Réessayez ou passez en mode SECOURS (affichage PDF brut)."
+
+  const stopPdfLoadingGuard = () => {
+    if (pdfLoadingTimerRef.current != null) {
+
+      window.clearTimeout(pdfLoadingTimerRef.current)
+      pdfLoadingTimerRef.current = null
+    }
+  }
+
+  const startPdfLoadingGuard = () => {
+    stopPdfLoadingGuard()
+    pdfLoadingTimerRef.current = window.setTimeout(() => {
+      pdfLoadingTimerRef.current = null
+      setPdfLoading(false) // on enlève l’overlay
+      window.alert(PDF_LOADING_FAIL_MESSAGE) // bouton OK natif
+    }, PDF_LOADING_TIMEOUT_MS)
+  }
+
+
 
   // ✅ Auto-start du test : garde-fou pour ne le lancer qu'une fois
   const testAutoStartedRef = useRef(false)
@@ -78,19 +165,27 @@ export default function TitleBar() {
   }, [gpsState])
 
   useEffect(() => {
+    // 🔊 diffusion globale (comportement existant)
     window.dispatchEvent(
       new CustomEvent('lim:pdf-mode-change', { detail: { mode: pdfMode } })
     )
+
+    // ✅ log rejouable : changement de mode PDF par l'utilisateur
+    logTestEvent('ui:pdf:mode-change', {
+      mode: pdfMode,
+    })
   }, [pdfMode])
+
 
   // Diffusion du mode test (pilotage global FT / overlays)
   useEffect(() => {
     window.dispatchEvent(
       new CustomEvent('lim:test-mode', {
-        detail: { enabled: testRecording },
+        detail: { enabled: testModeEnabled },
       })
     )
-  }, [testRecording])
+  }, [testModeEnabled])
+
 
   // ----- NUMÉRO DE TRAIN + TYPE + COMPOSITION -----
   const [trainDisplay, setTrainDisplay] = useState<string | undefined>(() => {
@@ -116,10 +211,16 @@ export default function TitleBar() {
 
   const [folded, setFolded] = useState(false)
 
-  // ✅ Auto-démarrage du test à l'ouverture de l'app
+  // ✅ Auto-démarrage du test à l'ouverture de l'app (uniquement si mode test ON)
   useEffect(() => {
     if (testAutoStartedRef.current) return
     testAutoStartedRef.current = true
+
+    // si le mode test est OFF, on ne démarre rien
+    if (!testModeEnabled) {
+      setTestRecording(false)
+      return
+    }
 
     // label simple à l'ouverture (train inconnu au boot, pdfMode = blue)
     const bootMode: 'blue' = 'blue'
@@ -140,6 +241,7 @@ export default function TitleBar() {
     setTestRecording(true)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
 
   // ----- Initialisation du moteur GPS→PK -----
   useEffect(() => {
@@ -256,22 +358,130 @@ export default function TitleBar() {
   // ----- IMPORT PDF -----
   const inputRef = useRef<HTMLInputElement>(null)
   const handleImportClick = () => inputRef.current?.click()
-  const onPickPdf: React.ChangeEventHandler<HTMLInputElement> = (e) => {
+
+  // calcule un id stable (SHA-256) à partir du contenu du PDF
+  const computePdfId = async (file: File): Promise<string> => {
+    const buf = await file.arrayBuffer()
+    const hashBuf = await crypto.subtle.digest('SHA-256', buf)
+    const hashArr = Array.from(new Uint8Array(hashBuf))
+    return hashArr.map((b) => b.toString(16).padStart(2, '0')).join('')
+  }
+
+  // stocke le PDF localement (Cache Storage) pour le replay
+  const storePdfForReplay = async (pdfId: string, file: File): Promise<string> => {
+    const cache = await caches.open('limgpt-pdf-replay')
+    const key = `/replay/pdf/${pdfId}`
+    const req = new Request(key)
+    const res = new Response(file, {
+      headers: {
+        'Content-Type': file.type || 'application/pdf',
+        'X-File-Name': file.name,
+      },
+    })
+    await cache.put(req, res)
+    return key // clé de récupération
+  }
+
+  const onPickPdf: React.ChangeEventHandler<HTMLInputElement> = async (e) => {
     const file = e.target.files?.[0]
     if (file) {
-      window.dispatchEvent(new CustomEvent('lim:import-pdf', { detail: { file } }))
-      window.dispatchEvent(new CustomEvent('ft:import-pdf', { detail: { file } }))
-      window.dispatchEvent(new CustomEvent('lim:pdf-raw', { detail: { file } }))
+      // ✅ Spinner ON dès que le PDF est sélectionné
+      setPdfLoading(true)
+
+      // ✅ Garde-fou : si le parsing ne se termine jamais, on sort du spinner
+      startPdfLoadingGuard()
+
+      // 1) ID stable + stockage local replay-ready (on le garde en fallback)
+      let pdfId: string | null = null
+      let replayKey: string | null = null
+      try {
+        pdfId = await computePdfId(file)
+        replayKey = await storePdfForReplay(pdfId, file)
+      } catch (err) {
+        console.warn('[TitleBar] Impossible de préparer le PDF pour replay (local)', err)
+        pdfId = null
+        replayKey = null
+      }
+
+      // 2) Upload Synology (QuickConnect) — pour replay sur autre iPad
+      const synologyCfg = {
+        baseUrl: 'https://michaelecalle.quickconnect.to',
+        username: 'limgpt_uploader',
+        password: 'ME2rdlp66180?',
+        destDir: '/LIMGPT_REPLAY/pdfs',
+      }
+
+      let uploadOk: boolean | null = null
+      let remotePath: string | null = null
+      let uploadError: string | null = null
+
+      if (pdfId) {
+        const up = await uploadPdfToSynology(synologyCfg, file, pdfId)
+        uploadOk = up.ok
+        remotePath = up.remotePath ?? null
+        uploadError = up.ok ? null : (up.error ?? 'upload_failed')
+      } else {
+        uploadOk = false
+        uploadError = 'no_pdfId'
+      }
+
+      // ✅ log rejouable : import PDF (+ local + synology)
+      logTestEvent('import:pdf', {
+        name: file.name,
+        size: file.size,
+        type: file.type || null,
+        lastModified: typeof file.lastModified === 'number' ? file.lastModified : null,
+        source: 'file-picker',
+
+        pdfId,
+
+        // fallback local (même iPad)
+        replayKey,
+
+        // objectif multi-iPad
+        storage: 'synology',
+        remotePath,
+        uploadOk,
+        uploadError,
+      })
+
+      // diffusion globale (inchangé) + infos replay
+      window.dispatchEvent(
+        new CustomEvent('lim:import-pdf', {
+          detail: { file, pdfId, replayKey, storage: 'synology', remotePath, uploadOk },
+        })
+      )
+      window.dispatchEvent(
+        new CustomEvent('ft:import-pdf', {
+          detail: { file, pdfId, replayKey, storage: 'synology', remotePath, uploadOk },
+        })
+      )
+      window.dispatchEvent(
+        new CustomEvent('lim:pdf-raw', {
+          detail: { file, pdfId, replayKey, storage: 'synology', remotePath, uploadOk },
+        })
+      )
+
       setPdfMode('green')
     }
     if (inputRef.current) inputRef.current.value = ''
   }
+
+
+
+
 
   useEffect(() => {
     const onParsed = (e: Event) => {
       const ce = e as CustomEvent
       const detail = (ce.detail || {}) as LIMFields
       ;(window as any).__limLastParsed = detail
+
+      // ✅ Spinner OFF : parsing terminé
+            // ✅ On coupe le garde-fou : on a bien reçu la fin de traitement
+      stopPdfLoadingGuard()
+
+      setPdfLoading(false)
 
       // mise à jour du numéro de train
       const raw = detail.trenPadded ?? detail.tren
@@ -286,6 +496,7 @@ export default function TitleBar() {
       const rawComp = (detail as any).composicion ?? (detail as any).unit
       setTrainComposition(rawComp ? String(rawComp) : undefined)
     }
+
 
     const onTrain = (e: Event) => {
       const ce = e as CustomEvent
@@ -605,8 +816,24 @@ export default function TitleBar() {
       : baseTitle
 
   const handleTitleClick = () => {
+    // ✅ Simulation : on bloque les commandes de l'app (seul le player agit)
+    if (simulationEnabled) {
+      logTestEvent('ui:blocked', {
+        control: 'infosLtvFold',
+        source: 'titlebar',
+      })
+      return
+    }
+
     setFolded((prev) => {
       const next = !prev
+
+      // ✅ log rejouable : fold/unfold Infos+LTV
+      logTestEvent('ui:infos-ltv:fold-change', {
+        folded: next,
+        source: 'titlebar',
+      })
+
       window.dispatchEvent(
         new CustomEvent('lim:infos-ltv-fold-change', {
           detail: { folded: next },
@@ -615,6 +842,8 @@ export default function TitleBar() {
       return next
     })
   }
+
+
 
   const IconSun = () => (
     <svg
@@ -663,6 +892,19 @@ export default function TitleBar() {
       id="lim-titlebar-root"
       className="surface-header rounded-2xl px-3 py-2 shadow-sm"
     >
+
+            {pdfLoading && (
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/40 backdrop-blur-[1px]">
+          <div className="rounded-2xl bg-white dark:bg-zinc-900 px-5 py-4 shadow-lg border border-zinc-200 dark:border-zinc-700 flex items-center gap-3">
+            <svg className="h-6 w-6 animate-spin" viewBox="0 0 24 24" aria-hidden="true">
+              <circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" strokeWidth="3" opacity="0.2" />
+              <path d="M21 12a9 9 0 0 0-9-9" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
+            </svg>
+            <div className="text-sm font-semibold">Traitement du PDF…</div>
+          </div>
+        </div>
+      )}
+
       <div className="flex items-center justify-between gap-2">
         {/* Gauche — Heure + boutons état */}
         <div className="flex min-w-0 items-center gap-2">
@@ -688,6 +930,15 @@ export default function TitleBar() {
               <button
                 type="button"
                 onClick={() => {
+                  // ✅ Simulation : on bloque les commandes de l'app (seul le player agit)
+                  if (simulationEnabled) {
+                    logTestEvent('ui:blocked', {
+                      control: 'autoScroll',
+                      source: 'titlebar',
+                    })
+                    return
+                  }
+
                   const next = !autoScroll
 
                   // log du clic Play/Pause
@@ -704,13 +955,16 @@ export default function TitleBar() {
                     })
                   )
 
-                  // 2) démarrer / arrêter le suivi GPS
-                  if (next) {
-                    startGpsWatch()
-                  } else {
-                    stopGpsWatch()
+                  // 2) démarrer / arrêter le suivi GPS (désactivé en simulation)
+                  if (!simulationEnabled) {
+                    if (next) {
+                      startGpsWatch()
+                    } else {
+                      stopGpsWatch()
+                    }
                   }
                 }}
+
                 className={`h-7 w-7 rounded-full flex items-center justify-center text-[11px] transition
                   ${
                     autoScroll
@@ -874,6 +1128,15 @@ export default function TitleBar() {
           <button
             type="button"
             onClick={() => {
+              // ✅ Simulation : on bloque les commandes de l'app (seul le player agit)
+              if (simulationEnabled) {
+                logTestEvent('ui:blocked', {
+                  control: 'pdfModeButton',
+                  source: 'titlebar',
+                })
+                return
+              }
+
               const anyRef = inputRef as any
               const currentInput = anyRef.current as HTMLInputElement | null
 
@@ -910,6 +1173,7 @@ export default function TitleBar() {
               }
             }}
             className={
+
               pdfMode === 'blue'
                 ? 'btn btn-primary h-8 px-3 text-xs flex items-center gap-1'
                 : pdfMode === 'green'
@@ -924,102 +1188,322 @@ export default function TitleBar() {
           </button>
 
           {/* STOP (interruption du test) */}
-          <button
-            type="button"
-            onClick={() => {
-              // 1) Décharger le PDF + retour état initial UI
-              // - stop auto-scroll + stop GPS
-              if (autoScroll) {
-                setAutoScroll(false)
-                window.dispatchEvent(
-                  new CustomEvent('ft:auto-scroll-change', {
-                    detail: { enabled: false, source: 'titlebar' },
+          {testModeEnabled && (
+            <button
+              type="button"
+onClick={async () => {
+                // ✅ Simulation : on bloque les commandes de l'app (seul le player agit)
+                if (simulationEnabled) {
+                  logTestEvent('ui:blocked', {
+                    control: 'stopButton',
+                    source: 'titlebar',
                   })
-                )
-              }
-              stopGpsWatch()
-
-              // - reset affichage avance/retard
-              setScheduleDelta(null)
-              setScheduleDeltaIsLarge(false)
-
-              // - retour à l'état initial PDF
-              setPdfMode('blue')
-
-              // 🔊 événements de "déchargement" (à écouter côté PDF/FT si besoin)
-              window.dispatchEvent(new CustomEvent('lim:clear-pdf'))
-              window.dispatchEvent(new CustomEvent('ft:clear-pdf'))
-              window.dispatchEvent(
-                new CustomEvent('lim:pdf-raw', { detail: { file: null } })
-              )
-
-              // 2) Stop session de test (on fige les logs)
-              if (testRecording) {
-                logTestEvent('ui:test:stop', { source: 'stop_button' })
-                stopTestSession()
-                setTestRecording(false)
-              }
-
-              // 3) Proposition export
-              const wantExport = window.confirm('Exporter les logs, oui ou non ?')
-
-              if (wantExport) {
-                const exported = exportTestLog()
-                if (!exported) {
-                  alert('Aucun événement de test à exporter.')
+                  return
                 }
+
+                // 1) Décharger le PDF + retour état initial UI
+                // - stop auto-scroll + stop GPS
+                if (autoScroll) {
+                  setAutoScroll(false)
+                  window.dispatchEvent(
+                    new CustomEvent('ft:auto-scroll-change', {
+                      detail: { enabled: false, source: 'titlebar' },
+                    })
+                  )
+                }
+                stopGpsWatch()
+
+                // - reset affichage avance/retard
+                setScheduleDelta(null)
+                setScheduleDeltaIsLarge(false)
+
+                // - retour à l'état initial PDF
+                setPdfMode('blue')
+
+                setPdfLoading(false)
+                // 2) Stop session de test (on fige les logs)
+                if (testRecording) {
+                  // On marque l'intention STOP tout de suite
+                  logTestEvent('ui:test:stop', { source: 'stop_button' })
+
+                  // --- Upload automatique du log (avant stopTestSession pour que l'URL soit loggée) ---
+                  try {
+                    const mod = await import('../../lib/testLogger')
+                    const built = mod.buildTestLogFile?.()
+
+                    if (built?.ok && built.blob && built.filename) {
+                      const form = new FormData()
+                      form.append('token', 'limgpt_upload_v1_9f3a7c2e') // doit matcher upload_log.php
+                      // logId = identifiant de session (stable et déjà utilisé)
+                      form.append('logId', built.sessionId ?? '')
+                      form.append('file', built.blob, built.filename)
+
+                      const res = await fetch(
+                        'https://radioequinoxe.com/limgpt/upload_log.php',
+                        { method: 'POST', body: form }
+                      )
+
+                      const json = await res.json().catch(() => null)
+
+                      if (json?.ok && json?.remoteUrl) {
+                        logTestEvent('testlog:uploaded', {
+                          remoteUrl: json.remoteUrl,
+
+                          sessionId: built.sessionId ?? null,
+                          filename: built.filename,
+                          source: 'stop_button',
+                        })
+                      } else {
+                        logTestEvent('testlog:upload:failed', {
+                          sessionId: built.sessionId ?? null,
+                          reason: json?.error ?? 'bad_response',
+                          source: 'stop_button',
+                        })
+                      }
+                    }
+                  } catch (err: any) {
+                    logTestEvent('testlog:upload:failed', {
+                      reason: err?.message ?? String(err),
+                      source: 'stop_button',
+                    })
+                  }
+
+                  // Maintenant seulement : on fige la session
+                  stopTestSession()
+                  setTestRecording(false)
+                }
+
+                // 3) Proposition export
+
+                const wantExport = window.confirm('Exporter les logs, oui ou non ?')
+
+                if (wantExport) {
+                  const exported = exportTestLog()
+                  if (!exported) {
+                    alert('Aucun événement de test à exporter.')
+                  }
+                }
+
+                // 4) ✅ Redémarrer immédiatement une nouvelle session de log
+                //    (label forcé en mode_blue, car setPdfMode est asynchrone)
+                const nextMode: 'blue' = 'blue'
+
+                const labelParts: string[] = []
+                if (trainDisplay) labelParts.push(`train_${trainDisplay}`)
+                labelParts.push(`mode_${nextMode}`)
+                labelParts.push('auto')
+
+                const label = labelParts.join('_')
+                startTestSession(label)
+                setTestRecording(true)
+
+                // (Si Non : rien à faire, on est déjà revenu à l'état initial)
+              }}
+              disabled={!testRecording}
+              className={
+
+                testRecording
+                  ? 'h-8 w-10 rounded-md bg-red-500 text-white font-semibold flex items-center justify-center'
+                  : 'h-8 w-10 rounded-md bg-zinc-200 text-zinc-500 dark:bg-zinc-700 dark:text-zinc-400 flex items-center justify-center cursor-not-allowed'
               }
+              title="Stop (interrompre le test)"
+              aria-label="Stop"
+            >
+              {/* icône panneau STOP */}
+              <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+                <path
+                  d="M8.2 2.6h7.6l5.6 5.6v7.6l-5.6 5.6H8.2L2.6 15.8V8.2L8.2 2.6Z"
+                  fill="currentColor"
+                  opacity="0.18"
+                />
+                <path
+                  d="M8.2 2.6h7.6l5.6 5.6v7.6l-5.6 5.6H8.2L2.6 15.8V8.2L8.2 2.6Z"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.6"
+                />
+                <text
+                  x="12"
+                  y="14"
+                  textAnchor="middle"
+                  fontSize="7"
+                  fontWeight="700"
+                  fill="currentColor"
+                  style={{ letterSpacing: '0.5px' }}
+                >
+                  STOP
+                </text>
+              </svg>
+            </button>
+          )}
+          {/* Paramètres */}
+          <details className="relative">
+            <summary
+              className="list-none h-8 w-10 rounded-md bg-zinc-200 text-zinc-800 dark:bg-zinc-700 dark:text-zinc-100 flex items-center justify-center cursor-pointer select-none"
+              title="Paramètres"
+              aria-label="Paramètres"
+            >
+              {/* icône roue dentée */}
+              <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+                <path
+                  d="M19.14 12.94c.04-.31.06-.63.06-.94s-.02-.63-.06-.94l2.03-1.58a.5.5 0 0 0 .12-.64l-1.92-3.32a.5.5 0 0 0-.6-.22l-2.39.96a7.2 7.2 0 0 0-1.63-.94l-.36-2.54A.5.5 0 0 0 13.9 1h-3.8a.5.5 0 0 0-.49.42l-.36 2.54c-.58.23-1.12.54-1.63.94l-2.39-.96a.5.5 0 0 0-.6.22L2.71 7.48a.5.5 0 0 0 .12.64l2.03 1.58c-.04.31-.06.63-.06.94s.02.63.06.94l-2.03 1.58a.5.5 0 0 0-.12.64l1.92 3.32a.5.5 0 0 0 .6.22l2.39-.96c.5.4 1.05.71 1.63.94l.36 2.54a.5.5 0 0 0 .49.42h3.8a.5.5 0 0 0 .49-.42l.36-2.54c.58-.23 1.12-.54 1.63-.94l2.39.96a.5.5 0 0 0 .6-.22l1.92-3.32a.5.5 0 0 0-.12-.64l-2.03-1.58Z"
+                  fill="currentColor"
+                  opacity="0.18"
+                />
+                <path
+                  d="M19.14 12.94c.04-.31.06-.63.06-.94s-.02-.63-.06-.94l2.03-1.58a.5.5 0 0 0 .12-.64l-1.92-3.32a.5.5 0 0 0-.6-.22l-2.39.96a7.2 7.2 0 0 0-1.63-.94l-.36-2.54A.5.5 0 0 0 13.9 1h-3.8a.5.5 0 0 0-.49.42l-.36 2.54c-.58.23-1.12.54-1.63.94l-2.39-.96a.5.5 0 0 0-.6.22L2.71 7.48a.5.5 0 0 0 .12.64l2.03 1.58c-.04.31-.06.63-.06.94s.02.63.06.94l-2.03 1.58a.5.5 0 0 0-.12.64l1.92 3.32a.5.5 0 0 0 .6.22l2.39-.96c.5.4 1.05.71 1.63.94l.36 2.54a.5.5 0 0 0 .49.42h3.8a.5.5 0 0 0 .49-.42l.36-2.54c.58-.23 1.12-.54 1.63-.94l2.39.96a.5.5 0 0 0 .6-.22l1.92-3.32a.5.5 0 0 0-.12-.64l-2.03-1.58ZM12 15.5A3.5 3.5 0 1 1 12 8a3.5 3.5 0 0 1 0 7.5Z"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.2"
+                />
+              </svg>
+            </summary>
 
-              // 4) ✅ Redémarrer immédiatement une nouvelle session de log
-              //    (label forcé en mode_blue, car setPdfMode est asynchrone)
-              const nextMode: 'blue' = 'blue'
+            <div className="absolute right-0 mt-2 w-72 rounded-xl bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 shadow-lg p-3 text-xs z-[9999]">
+              <div className="text-[11px] font-semibold opacity-70 mb-2">
+                Paramètres (provisoire)
+              </div>
 
-              const labelParts: string[] = []
-              if (trainDisplay) labelParts.push(`train_${trainDisplay}`)
-              labelParts.push(`mode_${nextMode}`)
-              labelParts.push('auto')
+              {/* Toggle MODE TEST (branché) */}
+              <label className="flex items-center justify-between gap-3 py-1 cursor-pointer select-none">
+                <span className="font-semibold">Mode test</span>
+                <input
+                  type="checkbox"
+                  checked={testModeEnabled}
+                  onChange={() => {
+                    // ✅ Simulation : on bloque les commandes de l'app (seul le player agit)
+                    if (simulationEnabled) {
+                      logTestEvent('ui:blocked', {
+                        control: 'testModeToggle',
+                        source: 'settings',
+                      })
+                      return
+                    }
 
-              const label = labelParts.join('_')
-              startTestSession(label)
-              setTestRecording(true)
+                    // OFF -> équivalent STOP (proposition export) puis désactivation du mode test
+                    if (testModeEnabled) {
+                      const wantDisable = window.confirm(
+                        'Désactiver le mode test ?\n\n(équivaut à STOP : proposition d’exporter les logs)'
+                      )
+                      if (!wantDisable) return
 
-              // (Si Non : rien à faire, on est déjà revenu à l'état initial)
-            }}
-            disabled={!testRecording}
-            className={
-              testRecording
-                ? 'h-8 w-10 rounded-md bg-red-500 text-white font-semibold flex items-center justify-center'
-                : 'h-8 w-10 rounded-md bg-zinc-200 text-zinc-500 dark:bg-zinc-700 dark:text-zinc-400 flex items-center justify-center cursor-not-allowed'
-            }
-            title="Stop (interrompre le test)"
-            aria-label="Stop"
-          >
-            {/* icône panneau STOP */}
-            <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
-              <path
-                d="M8.2 2.6h7.6l5.6 5.6v7.6l-5.6 5.6H8.2L2.6 15.8V8.2L8.2 2.6Z"
-                fill="currentColor"
-                opacity="0.18"
-              />
-              <path
-                d="M8.2 2.6h7.6l5.6 5.6v7.6l-5.6 5.6H8.2L2.6 15.8V8.2L8.2 2.6Z"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="1.6"
-              />
-              <text
-                x="12"
-                y="14"
-                textAnchor="middle"
-                fontSize="7"
-                fontWeight="700"
-                fill="currentColor"
-                style={{ letterSpacing: '0.5px' }}
-              >
-                STOP
-              </text>
-            </svg>
-          </button>
+                      // 1) Décharger le PDF + retour état initial UI
+                      if (autoScroll) {
+                        setAutoScroll(false)
+                        window.dispatchEvent(
+                          new CustomEvent('ft:auto-scroll-change', {
+                            detail: { enabled: false, source: 'titlebar' },
+                          })
+                        )
+                      }
+                      stopGpsWatch()
+
+                      setScheduleDelta(null)
+                      setScheduleDeltaIsLarge(false)
+
+                      setPdfMode('blue')
+                      setPdfLoading(false)
+                      stopPdfLoadingGuard()
+
+                      window.dispatchEvent(new CustomEvent('lim:clear-pdf'))
+                      window.dispatchEvent(new CustomEvent('ft:clear-pdf'))
+                      window.dispatchEvent(
+                        new CustomEvent('lim:pdf-raw', { detail: { file: null } })
+                      )
+
+                      // 2) Stop session de test (on fige les logs)
+                      if (testRecording) {
+                        logTestEvent('ui:test:stop', { source: 'settings_toggle' })
+                        stopTestSession()
+                        setTestRecording(false)
+                      }
+
+                      // 3) Proposition export
+                      const wantExport = window.confirm('Exporter les logs, oui ou non ?')
+                      if (wantExport) {
+                        const exported = exportTestLog()
+                        if (!exported) {
+                          alert('Aucun événement de test à exporter.')
+                        }
+                      }
+
+                      // 4) Désactivation du mode test (=> le bouton STOP disparaît)
+                      setTestModeEnabled(false)
+                      return
+                    }
+
+                    // ON -> démarrage d’un nouvel enregistrement
+                    const wantEnable = window.confirm(
+                      'Activer le mode test ?\n\n(démarre un nouvel enregistrement)'
+                    )
+                    if (!wantEnable) return
+
+                    setTestModeEnabled(true)
+
+                    const nextMode: 'blue' = 'blue'
+                    const labelParts: string[] = []
+                    if (trainDisplay) labelParts.push(`train_${trainDisplay}`)
+                    labelParts.push(`mode_${nextMode}`)
+                    labelParts.push('manual')
+
+                    const label = labelParts.join('_')
+                    startTestSession(label)
+                    logTestEvent('ui:test:manual-start', {
+                      source: 'settings_toggle',
+                      train: trainDisplay ?? null,
+                      pdfMode: nextMode,
+                      label,
+                    })
+                    setTestRecording(true)
+                  }}
+
+                  className="h-4 w-4 cursor-pointer accent-blue-600"
+                />
+              </label>
+
+              <div className="h-px bg-zinc-200/80 dark:bg-zinc-700/80 my-2" />
+
+
+
+
+              {/* Toggle OCR (branché) */}
+              <label className="flex items-center justify-between gap-3 py-1 cursor-pointer select-none">
+                <span>OCR online</span>
+                <input
+                  type="checkbox"
+                  checked={ocrOnlineEnabled}
+                  onChange={() => {
+                    // ✅ Simulation : on bloque les commandes de l'app (seul le player agit)
+                    if (simulationEnabled) {
+                      logTestEvent('ui:blocked', {
+                        control: 'ocrOnlineToggle',
+                        source: 'settings',
+                      })
+                      return
+                    }
+
+                    const next = !ocrOnlineEnabled
+
+                    // 1) UI/state
+                    setOcrOnlineEnabledState(next)
+
+                    // 2) log rejouable (simulation)
+                    logTestEvent('settings:ocrOnline:set', {
+                      enabled: next,
+                      source: 'settings',
+                    })
+                  }}
+
+                  className="h-4 w-4 cursor-pointer accent-blue-600"
+                />
+              </label>
+
+
+
+            </div>
+          </details>
+
+
 
           <input
             ref={inputRef}

@@ -208,7 +208,7 @@ export async function handleFile(file: File): Promise<Fields> {
   if (needsOCR) {
     try {
       if (!ocrFallbackFn) {
-        const mod = await import("./ocrFallback")
+        const mod = await import("./ocrRouter")
         ocrFallbackFn = mod.ocrFallback
       }
       const textB = await ocrFallbackFn(file)

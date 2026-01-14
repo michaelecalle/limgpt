@@ -1,4 +1,69 @@
 // src/App.tsx
+// DEV ONLY — Sniffer des events écoutés via window.addEventListener
+(() => {
+  const w = window as any;
+  if (w.__limgptSnifferInstalled) return;
+  w.__limgptSnifferInstalled = true;
+
+  const original = window.addEventListener.bind(window);
+  const seen = new Map<string, number>();
+
+  window.addEventListener = ((type: any, listener: any, options?: any) => {
+    const t = String(type);
+    seen.set(t, (seen.get(t) ?? 0) + 1);
+
+    // Expose dans window pour lecture facile
+    w.__limgptListeners = Object.fromEntries(seen.entries());
+
+    // Log console utile (filtre sur custom events)
+    if (t.includes(":")) console.log("[listener]", t);
+
+    return original(type, listener as any, options);
+  }) as any;
+
+  console.log("[limgpt] addEventListener sniffer installed");
+})();
+// DEV ONLY — Sniffer des events dispatchés
+(() => {
+  const w = window as any;
+  if (w.__limgptDispatchSnifferInstalled) return;
+  w.__limgptDispatchSnifferInstalled = true;
+
+  const original = window.dispatchEvent.bind(window);
+  const seen = new Map<string, number>();
+
+  window.dispatchEvent = ((evt: Event) => {
+    const t = (evt as any)?.type ? String((evt as any).type) : "unknown";
+    seen.set(t, (seen.get(t) ?? 0) + 1);
+    w.__limgptDispatched = Object.fromEntries(seen.entries());
+
+    if (t.includes(":")) console.log("[dispatch]", t, (evt as any).detail ?? "");
+    return original(evt);
+  }) as any;
+
+  console.log("[limgpt] dispatchEvent sniffer installed");
+})();
+// DEV ONLY — Sniffer des events dispatchés
+(() => {
+  const w = window as any;
+  if (w.__limgptDispatchSnifferInstalled) return;
+  w.__limgptDispatchSnifferInstalled = true;
+
+  const original = window.dispatchEvent.bind(window);
+  const seen = new Map<string, number>();
+
+  window.dispatchEvent = ((evt: Event) => {
+    const t = (evt as any)?.type ? String((evt as any).type) : "unknown";
+    seen.set(t, (seen.get(t) ?? 0) + 1);
+    w.__limgptDispatched = Object.fromEntries(seen.entries());
+
+    if (t.includes(":")) console.log("[dispatch]", t, (evt as any).detail ?? "");
+    return original(evt);
+  }) as any;
+
+  console.log("[limgpt] dispatchEvent sniffer installed");
+})();
+
 
 import "./lib/ltvParser"
 import "./lib/redPdfParser"
@@ -10,6 +75,7 @@ import TitleBar from "./components/LIM/TitleBar"
 import Infos from "./components/LIM/Infos"
 import LTV from "./components/LIM/LTV"
 import FT from "./components/LIM/FT"
+import ReplayOverlay from "./components/Replay/ReplayOverlay"
 import { APP_VERSION } from "./components/version"
 
 /**
@@ -37,6 +103,66 @@ export default function App() {
   const [pdfUrl, setPdfUrl] = React.useState<string | null>(null)
   const [rawPdfFile, setRawPdfFile] = React.useState<File | null>(null)
   const [pdfPageImages, setPdfPageImages] = React.useState<string[]>([])
+
+    // ============================================================
+  // REPLAY BOOTSTRAP (sans UI) — expose un player dans la console
+  // ============================================================
+  React.useEffect(() => {
+    let cancelled = false
+
+    ;(async () => {
+      try {
+        const mod = await import("./lib/replay/replayPlayer")
+        const ReplayPlayer = mod.ReplayPlayer
+
+        const player = new ReplayPlayer({
+          logger: (msg: string, data?: any) => console.log(msg, data ?? ""),
+          forceSimulation: true,
+        })
+
+        // Exposition console (dev)
+        ;(window as any).__limgptReplay = {
+          player,
+
+          // helpers pratiques
+          loadUrl: async (url: string) => {
+            await player.loadFromUrl(url)
+            console.log("[replay] loaded", {
+              status: player.getStatus(),
+              durationMs: player.getDurationMs(),
+              cursor: player.getCursor(),
+            })
+          },
+
+          play: () => player.play(),
+          pause: () => player.pause(),
+          stop: () => player.stop(),
+          seek: (tMs: number) => player.seek(tMs),
+          speed: (x: number) => player.setSpeed(x),
+
+          status: () => player.getStatus(),
+          cursor: () => player.getCursor(),
+          durationMs: () => player.getDurationMs(),
+                    startIso: () => player.getStartIso?.() ?? null,
+          nowIso: () => player.getNowIso?.() ?? null,
+
+          error: () => player.getError?.() ?? null,
+        }
+
+        if (!cancelled) {
+          console.log("[replay] bootstrap OK → window.__limgptReplay")
+        }
+      } catch (err) {
+        console.warn("[replay] bootstrap failed", err)
+      }
+    })()
+
+    return () => {
+      cancelled = true
+      // on ne stoppe pas forcément le player ici ; dev-only
+    }
+  }, [])
+
 
   // réception du PDF
   React.useEffect(() => {
@@ -145,6 +271,8 @@ export default function App() {
       <div className="flex-1 min-h-0 flex flex-col">
         {/* Bandeau titre */}
         <TitleBar />
+        <ReplayOverlay />
+
 
         {/* MODE BLEU : rendu dédié */}
         {pdfMode === "blue" && (

@@ -140,7 +140,7 @@ async function handleFileFT(file: File) {
 
   try {
     if (!ocrMultiFn) {
-      const mod = await import("./ocrFallback")
+      const mod = await import("./ocrRouter")
       ocrMultiFn = mod.ocrFallbackMultiWithLayout
     }
     const { pagesText, layout } = await ocrMultiFn(file, pdf.numPages)

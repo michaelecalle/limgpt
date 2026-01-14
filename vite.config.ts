@@ -3,10 +3,27 @@ import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import { VitePWA } from 'vite-plugin-pwa'
 
-// Configuration Vite – avec PWA (offline) + réseau local + port fixe
+// ✅ route serveur dev pour upload Synology (évite CORS côté navigateur)
+import { handleUploadToSynology } from './server/uploadToSynology'
+
 export default defineConfig({
   plugins: [
     react(),
+
+    // ✅ Middleware dev : POST /api/upload-pdf
+    {
+      name: 'limgpt-upload-proxy',
+      configureServer(server) {
+        server.middlewares.use((req, res, next) => {
+          if (req.url === '/api/upload-pdf' && req.method === 'POST') {
+            handleUploadToSynology(req, res)
+            return
+          }
+          next()
+        })
+      },
+    },
+
     VitePWA({
       registerType: 'autoUpdate',
       includeAssets: ['vite.svg'],
@@ -22,19 +39,19 @@ export default defineConfig({
           {
             src: '/vite.svg',
             sizes: '192x192',
-            type: 'image/svg+xml'
-          }
-        ]
+            type: 'image/svg+xml',
+          },
+        ],
       },
       devOptions: {
-        enabled: true,        // <- ACTIVE le service worker aussi en dev
-        navigateFallback: 'index.html'
-      }
-    })
+        enabled: true,
+        navigateFallback: 'index.html',
+      },
+    }),
   ],
   server: {
-    host: true,              // <- écoute sur toutes les interfaces (iPad inclus)
+    host: true,
     port: 5199,
-    strictPort: true
-  }
+    strictPort: true,
+  },
 })
