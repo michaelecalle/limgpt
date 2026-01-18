@@ -19,7 +19,7 @@ export const ANCRES_PK_S: AnchorPkS[] = [
     label: 'LIMITE ADIF-LFPSA',
   },
   {
-    pk: 748.9,
+    pk: 749.6,
     s_km: 286.273,
     lat: 42.2645806,
     lon: 2.9430284,

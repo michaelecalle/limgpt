@@ -15,6 +15,23 @@ import { ANCRES_PK_S } from './ancres_pk_s'
 // drapeau simple : le moteur est prêt quand les données sont chargées
 let engineReady = false
 
+// ----- GARDE-FOU #1 : anti-saut PK (mémoire du dernier PK accepté) -----
+let lastAcceptedPk: { pk: number; atMs: number } | null = null
+
+// ----- GARDE-FOU #2 : continuité directionnelle (évite les inversions franches) -----
+let lastDirection: 1 | -1 | null = null
+
+// seuil minimal (km) au-delà duquel une inversion de sens est jugée suspecte
+const DIRECTION_CHANGE_THRESHOLD_KM = 0.3
+
+
+// Seuils simples (à ajuster après tests terrain)
+// - vitesse max "plausible" (km/h) pour borner un saut entre deux points GPS
+// - marge fixe (km) pour tolérer un peu de bruit
+const MAX_PLAUSIBLE_SPEED_KMH = 400
+const PK_JUMP_MARGIN_KM = 0.25
+
+
 // ancres triées par s_km croissant (une seule fois)
 const SORTED_ANCHORS = [...ANCRES_PK_S].sort((a, b) => a.s_km - b.s_km)
 
@@ -85,6 +102,11 @@ function pkFromS(s_km: number | null | undefined): number | null {
 export async function initGpsPkEngine(): Promise<void> {
   if (engineReady) return
   engineReady = true
+    lastAcceptedPk = null
+
+        lastDirection = null
+
+
 
   if (typeof window !== 'undefined') {
     console.log('[gpsPkEngine] init — ruban LAV050 + ancres PK↔s chargés')
@@ -137,7 +159,51 @@ export function projectGpsToPk(lat: number, lon: number): GpsPkProjection | null
   const nearest = RIBBON_POINTS[bestIdx]
   const s_km = nearest.s_km
   const distance_m = bestDist
-  const pk = pkFromS(s_km)
+  const pkCandidate = pkFromS(s_km)
+
+  // ----- GARDE-FOU #1 : anti-saut PK -----
+  const nowMs = Date.now()
+  let pk = pkCandidate
+
+  if (
+    pkCandidate != null &&
+    Number.isFinite(pkCandidate) &&
+    lastAcceptedPk &&
+    Number.isFinite(lastAcceptedPk.pk)
+  ) {
+    const dtMs = Math.max(1, nowMs - lastAcceptedPk.atMs)
+    const dtH = dtMs / 3600000
+    const allowedJumpKm = MAX_PLAUSIBLE_SPEED_KMH * dtH + PK_JUMP_MARGIN_KM
+    const deltaPk = pkCandidate - lastAcceptedPk.pk
+    const jumpKm = Math.abs(deltaPk)
+
+    if (jumpKm > allowedJumpKm) {
+      // GARDE-FOU #1 : saut trop grand → rejet
+      pk = lastAcceptedPk.pk
+    } else {
+      // GARDE-FOU #2 : continuité directionnelle (inversion franche)
+      const dir: 1 | -1 = deltaPk >= 0 ? 1 : -1
+
+      if (
+        lastDirection != null &&
+        dir !== lastDirection &&
+        jumpKm >= DIRECTION_CHANGE_THRESHOLD_KM
+      ) {
+        // inversion significative → rejet
+        pk = lastAcceptedPk.pk
+      } else {
+        // accepté
+        pk = pkCandidate
+        lastAcceptedPk = { pk: pkCandidate, atMs: nowMs }
+        lastDirection = dir
+      }
+    }
+  } else if (pkCandidate != null && Number.isFinite(pkCandidate)) {
+    // Premier PK valide : on initialise la mémoire
+    lastAcceptedPk = { pk: pkCandidate, atMs: nowMs }
+    lastDirection = null
+  }
+
 
   return {
     pk,
@@ -149,4 +215,5 @@ export function projectGpsToPk(lat: number, lon: number): GpsPkProjection | null
     nearestLat: nearest.lat,
     nearestLon: nearest.lon,
   }
+
 }

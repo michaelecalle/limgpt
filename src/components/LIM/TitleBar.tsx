@@ -403,7 +403,7 @@ export default function TitleBar() {
         replayKey = null
       }
 
-      // 2) Upload Synology (QuickConnect) — pour replay sur autre iPad
+      // 2) Upload Synology (QuickConnect) — NE DOIT PAS BLOQUER l'import/parsing
       const synologyCfg = {
         baseUrl: 'https://michaelecalle.quickconnect.to',
         username: 'limgpt_uploader',
@@ -411,21 +411,12 @@ export default function TitleBar() {
         destDir: '/LIMGPT_REPLAY/pdfs',
       }
 
+      // Infos upload (connues plus tard)
       let uploadOk: boolean | null = null
       let remotePath: string | null = null
       let uploadError: string | null = null
 
-      if (pdfId) {
-        const up = await uploadPdfToSynology(synologyCfg, file, pdfId)
-        uploadOk = up.ok
-        remotePath = up.remotePath ?? null
-        uploadError = up.ok ? null : (up.error ?? 'upload_failed')
-      } else {
-        uploadOk = false
-        uploadError = 'no_pdfId'
-      }
-
-      // ✅ log rejouable : import PDF (+ local + synology)
+      // ✅ log rejouable : import PDF (upload async, donc remotePath/uploadOk peuvent être null ici)
       logTestEvent('import:pdf', {
         name: file.name,
         size: file.size,
@@ -438,32 +429,95 @@ export default function TitleBar() {
         // fallback local (même iPad)
         replayKey,
 
-        // objectif multi-iPad
+        // objectif multi-iPad (upload en tâche de fond)
         storage: 'synology',
-        remotePath,
-        uploadOk,
-        uploadError,
+        remotePath: null,
+        uploadOk: null,
+        uploadError: null,
+        uploadAsync: true,
       })
 
-      // diffusion globale (inchangé) + infos replay
+      // ✅ IMPORTANT : on déclenche le parsing AVANT tout upload réseau
       window.dispatchEvent(
         new CustomEvent('lim:import-pdf', {
-          detail: { file, pdfId, replayKey, storage: 'synology', remotePath, uploadOk },
+          detail: { file, pdfId, replayKey, storage: 'synology', remotePath: null, uploadOk: null },
         })
       )
       window.dispatchEvent(
         new CustomEvent('ft:import-pdf', {
-          detail: { file, pdfId, replayKey, storage: 'synology', remotePath, uploadOk },
+          detail: { file, pdfId, replayKey, storage: 'synology', remotePath: null, uploadOk: null },
         })
       )
       window.dispatchEvent(
         new CustomEvent('lim:pdf-raw', {
-          detail: { file, pdfId, replayKey, storage: 'synology', remotePath, uploadOk },
+          detail: { file, pdfId, replayKey, storage: 'synology', remotePath: null, uploadOk: null },
         })
       )
 
+      // L’UI passe en NORMAL dès que l’import est lancé (parsing en cours)
       setPdfMode('green')
+
+      // 3) Upload réseau en arrière-plan + timeout (sans bloquer l'app)
+      const UPLOAD_PENDING_TIMEOUT_MS = 12_000
+
+      if (pdfId) {
+        let settled = false
+
+        const pendingTimer = window.setTimeout(() => {
+          if (settled) return
+          // on ne coupe rien, on signale juste que l'upload traîne
+          logTestEvent('import:pdf:upload:pending', {
+            pdfId,
+            timeoutMs: UPLOAD_PENDING_TIMEOUT_MS,
+            storage: 'synology',
+            source: 'file-picker',
+          })
+        }, UPLOAD_PENDING_TIMEOUT_MS)
+
+        ;(async () => {
+          try {
+            const up = await uploadPdfToSynology(synologyCfg, file, pdfId)
+            settled = true
+            window.clearTimeout(pendingTimer)
+
+            uploadOk = up.ok
+            remotePath = up.remotePath ?? null
+            uploadError = up.ok ? null : (up.error ?? 'upload_failed')
+
+            // log résultat upload (asynchrone)
+            logTestEvent('import:pdf:upload:done', {
+              pdfId,
+              storage: 'synology',
+              uploadOk,
+              remotePath,
+              uploadError,
+              source: 'file-picker',
+            })
+          } catch (err: any) {
+            settled = true
+            window.clearTimeout(pendingTimer)
+
+            uploadOk = false
+            remotePath = null
+            uploadError = err?.message ?? String(err)
+
+            logTestEvent('import:pdf:upload:done', {
+              pdfId,
+              storage: 'synology',
+              uploadOk,
+              remotePath,
+              uploadError,
+              source: 'file-picker',
+            })
+          }
+        })()
+      } else {
+        // pas de pdfId => pas d'upload synology
+        uploadOk = false
+        uploadError = 'no_pdfId'
+      }
     }
+
     if (inputRef.current) inputRef.current.value = ''
   }
 
@@ -588,6 +642,7 @@ export default function TitleBar() {
   }, [])
 
   // ✅ GPS (source de vérité FT) : la TitleBar affiche UNIQUEMENT l'état calculé dans FT
+  // Garde-fou #3 : en ORANGE, on conserve le dernier PK GREEN affiché (pas de "danse")
   useEffect(() => {
     const handler = (e: Event) => {
       const ce = e as CustomEvent
@@ -602,7 +657,7 @@ export default function TitleBar() {
 
       if (state === 'ORANGE') {
         setGpsState(1)
-        setGpsPkDisplay(null)
+        // ✅ garde-fou #3 : ne pas effacer le PK affiché en ORANGE
         return
       }
 
@@ -621,6 +676,7 @@ export default function TitleBar() {
       window.removeEventListener('lim:gps-state', handler as EventListener)
     }
   }, [])
+
 
   // synchronise le bouton Play/Pause + état horaire/standby si FT change le mode auto-scroll
   useEffect(() => {
@@ -1085,23 +1141,28 @@ export default function TitleBar() {
             />
             <button
               type="button"
-              className={`relative z-10 w-16 rounded-lg px-2.5 py-1 font-medium flex items-center justify-center gap-1 ${
+              className={`relative z-10 w-10 rounded-lg px-2.5 py-1 font-medium flex items-center justify-center ${
                 !dark ? 'text-zinc-900 dark:text-zinc-100' : 'opacity-75'
               }`}
               onClick={() => setDark(false)}
+              aria-label="Mode jour"
+              title="Jour"
             >
-              <IconSun /> Jour
+              <IconSun />
             </button>
             <button
               type="button"
-              className={`relative z-10 w-16 rounded-lg px-2.5 py-1 font-medium flex items-center justify-center gap-1 ${
+              className={`relative z-10 w-10 rounded-lg px-2.5 py-1 font-medium flex items-center justify-center ${
                 dark ? 'text-zinc-900 dark:text-zinc-100' : 'opacity-75'
               }`}
               onClick={() => setDark(true)}
+              aria-label="Mode nuit"
+              title="Nuit"
             >
-              <IconMoon /> Nuit
+              <IconMoon />
             </button>
           </div>
+
 
           {/* Luminosité */}
           <div className="flex items-center gap-1.5">
