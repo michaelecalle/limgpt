@@ -19,12 +19,28 @@ let workerPromise: Promise<Worker> | null = null
 async function getWorker(): Promise<Worker> {
   if (!workerPromise) {
     workerPromise = (async () => {
-      const w = await createWorker("spa") // espagnol (tu peux changer)
+      console.log("[ocrLocalFallback] createWorker(spa) start")
+
+      // garde-fou : si createWorker se bloque (assets/worker), on coupe
+      const CREATE_WORKER_TIMEOUT_MS = 20_000
+
+      const w = await Promise.race([
+        createWorker("spa"),
+        new Promise<Worker>((_, reject) =>
+          window.setTimeout(
+            () => reject(new Error("createWorker timeout (offline assets?)")),
+            CREATE_WORKER_TIMEOUT_MS
+          )
+        ),
+      ])
+
+      console.log("[ocrLocalFallback] createWorker(spa) OK")
       return w
     })()
   }
   return workerPromise
 }
+
 
 async function renderPageToCanvas(page: any, scale = 2.0): Promise<HTMLCanvasElement> {
   const viewport = page.getViewport({ scale })
@@ -82,7 +98,18 @@ export async function ocrFallback(file: File): Promise<string> {
   const canvas = await renderPageToCanvas(page1, scale)
 
   const w = await getWorker()
-  const res = await w.recognize(canvas)
+
+  console.log("[ocrLocalFallback] recognize(page=1) start")
+  const RECOGNIZE_TIMEOUT_MS = 25_000
+
+  const res = await Promise.race([
+    w.recognize(canvas),
+    new Promise<any>((_, reject) =>
+      window.setTimeout(() => reject(new Error("recognize timeout")), RECOGNIZE_TIMEOUT_MS)
+    ),
+  ])
+
+  console.log("[ocrLocalFallback] recognize(page=1) OK")
 
   const text = normalizeText(res?.data?.text ?? "")
   return text
@@ -108,7 +135,21 @@ export async function ocrFallbackMultiWithLayout(
     const page = await pdf.getPage(i)
     const canvas = await renderPageToCanvas(page, scale)
 
-    const res = await w.recognize(canvas)
+    console.log(`[ocrLocalFallback] recognize(page=${i}) start`)
+    const RECOGNIZE_TIMEOUT_MS = 25_000
+
+    const res = await Promise.race([
+      w.recognize(canvas),
+      new Promise<any>((_, reject) =>
+        window.setTimeout(
+          () => reject(new Error(`recognize timeout page=${i}`)),
+          RECOGNIZE_TIMEOUT_MS
+        )
+      ),
+    ])
+
+    console.log(`[ocrLocalFallback] recognize(page=${i}) OK`)
+
     const text = normalizeText(res?.data?.text ?? "")
     pagesText.push(text)
 

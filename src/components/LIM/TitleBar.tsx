@@ -1130,7 +1130,8 @@ export default function TitleBar() {
         </div>
 
         {/* Droite — Contrôles */}
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 relative z-10">
+
           {/* Jour/Nuit */}
           <div className="relative inline-flex select-none items-center rounded-xl border p-0.5 text-[11px] shadow-sm border-zinc-200 dark:border-zinc-700">
             <span
@@ -1186,6 +1187,7 @@ export default function TitleBar() {
           </div>
 
           {/* Importer PDF / modes */}
+          {/* Importer PDF / modes */}
           <button
             type="button"
             onClick={() => {
@@ -1201,6 +1203,13 @@ export default function TitleBar() {
               const anyRef = inputRef as any
               const currentInput = anyRef.current as HTMLInputElement | null
 
+              // ✅ Cas simple : en mode "Importer PDF" (blue), on déclenche immédiatement l'import
+              if (pdfMode === 'blue') {
+                handleImportClick()
+                return
+              }
+
+              // Sinon, on garde ton comportement “tap = toggle / double tap = retour blue”
               if (currentInput && (currentInput as any).__pdfClickTimer) {
                 clearTimeout((currentInput as any).__pdfClickTimer)
                 ;(currentInput as any).__pdfClickTimer = null
@@ -1215,18 +1224,14 @@ export default function TitleBar() {
                 ;(currentInput as any).__pdfClickTimer = setTimeout(() => {
                   ;(currentInput as any).__pdfClickTimer = null
 
-                  if (pdfMode === 'blue') {
-                    handleImportClick()
-                  } else if (pdfMode === 'green') {
+                  if (pdfMode === 'green') {
                     setPdfMode('red')
                   } else {
                     setPdfMode('green')
                   }
                 }, 200)
               } else {
-                if (pdfMode === 'blue') {
-                  handleImportClick()
-                } else if (pdfMode === 'green') {
+                if (pdfMode === 'green') {
                   setPdfMode('red')
                 } else {
                   setPdfMode('green')
@@ -1234,7 +1239,6 @@ export default function TitleBar() {
               }
             }}
             className={
-
               pdfMode === 'blue'
                 ? 'btn btn-primary h-8 px-3 text-xs flex items-center gap-1'
                 : pdfMode === 'green'
@@ -1247,6 +1251,7 @@ export default function TitleBar() {
             {pdfMode === 'green' && <span className="font-bold">NORMAL</span>}
             {pdfMode === 'red' && <span className="font-bold">SECOURS</span>}
           </button>
+
 
           {/* STOP (interruption du test) */}
           {testModeEnabled && (

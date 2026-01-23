@@ -267,11 +267,44 @@ export async function handleFile(file: File): Promise<Fields> {
 }
 
 function setup() {
+  // ✅ Singleton global : empêche d'installer plusieurs fois le listener (HMR / double import / etc.)
+  const w = window as any
+  if (w.__limParserImportListenerInstalled) {
+    console.warn("[limParser] listener already installed, skipping setup()")
+    return
+  }
+  w.__limParserImportListenerInstalled = true
+
+  // ✅ anti-double import : mémoire globale partagée (même si le module est chargé 2 fois)
+  if (!w.__limParserLastImport) {
+    w.__limParserLastImport = { fp: null as string | null, atMs: 0 }
+  }
+
   const onImport = (e: Event) => {
     const ce = e as CustomEvent
     const file: File | undefined = ce.detail?.file
-    if (file) void handleFile(file)
+    if (!file) return
+
+    const fp = `${file.name}|${file.size}|${file.lastModified}`
+    const now = Date.now()
+
+    const last = w.__limParserLastImport as { fp: string | null; atMs: number }
+
+    // Si même fichier reçu très rapidement => on ignore le doublon
+    if (fp === last.fp && now - last.atMs < 2000) {
+      console.warn("[limParser] Duplicate lim:import-pdf ignored (global)", fp)
+      return
+    }
+
+    last.fp = fp
+    last.atMs = now
+
+    void handleFile(file)
   }
+
   window.addEventListener("lim:import-pdf", onImport as EventListener)
+  console.log("[limParser] listener installed (singleton)")
 }
 setup()
+
+
