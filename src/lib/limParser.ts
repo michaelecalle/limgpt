@@ -15,6 +15,9 @@ import workerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url"
 // on NE charge PLUS l’OCR ici en statique
 let ocrFallbackFn: null | ((file: File) => Promise<string>) = null
 
+// ✅ garde-fou OCR : évite un blocage infini (offline/worker/lang, etc.)
+const OCR_TIMEOUT_MS = 20_000
+
 export type Fields = {
   tren?: string
   trenPadded?: string
@@ -42,7 +45,11 @@ function cleanNumber(v?: string | number | null): number | undefined {
 }
 
 function normalize(s: string): string {
-  return s.replace(/\u00A0/g, " ").replace(/[\t]+/g, " ").replace(/\s{2,}/g, " ").trim()
+  return s
+    .replace(/\u00A0/g, " ")
+    .replace(/[\t]+/g, " ")
+    .replace(/\s{2,}/g, " ")
+    .trim()
 }
 
 function pickTrain(s: string): string | undefined {
@@ -78,7 +85,9 @@ function detectRelation(txt: string, trenPadded?: string): string | undefined {
     const num = parseInt(trenPadded, 10)
     const odd = num % 2 === 1
     if (first === "0") {
-      return odd ? "Barcelona Sants - Limite ADIF-LFPSA" : "Limite ADIF-LFPSA - Barcelona Sants"
+      return odd
+        ? "Barcelona Sants - Limite ADIF-LFPSA"
+        : "Limite ADIF-LFPSA - Barcelona Sants"
     }
     if (first === "3") {
       return odd ? "Can Tunis AV - Barcelona Sants" : "Barcelona Sants - Can Tunis AV"
@@ -89,10 +98,14 @@ function detectRelation(txt: string, trenPadded?: string): string | undefined {
 
 function extractFechaRaw(s: string): string | undefined {
   const S = s
-  const mLblNum = S.match(/\b(?:FECHA|DATE)\b[^\d\r\n]{0,20}([0-3]?\d[\/.\-][01]?\d[\/.\-](?:\d{2}|\d{4}))/i)
+  const mLblNum = S.match(
+    /\b(?:FECHA|DATE)\b[^\d\r\n]{0,20}([0-3]?\d[\/.\-][01]?\d[\/.\-](?:\d{2}|\d{4}))/i
+  )
   if (mLblNum) return mLblNum[1]
 
-  const mLblTxt = S.match(/\b(?:FECHA|DATE)\b[^\dA-Za-z\u00C0-\u017F\r\n]{0,20}(\d{1,2}\s+[A-Za-z\u00C0-\u017F\-]+\s+\d{4})/i)
+  const mLblTxt = S.match(
+    /\b(?:FECHA|DATE)\b[^\dA-Za-z\u00C0-\u017F\r\n]{0,20}(\d{1,2}\s+[A-Za-z\u00C0-\u017F\-]+\s+\d{4})/i
+  )
   if (mLblTxt) return mLblTxt[1]
 
   const head = S.slice(0, 600)
@@ -106,7 +119,8 @@ function extractFechaRaw(s: string): string | undefined {
 }
 
 function extractComposicion(s: string): string | undefined {
-  const mLbl = s.match(/\b(?:COMPOSICI[ÓO]N|COMPOSICION)\b\s*[:\-–]?\s*([A-Z0-9]{1,4})\b/i)?.[1]
+  const mLbl = s
+    .match(/\b(?:COMPOSICI[ÓO]N|COMPOSICION)\b\s*[:\-–]?\s*([A-Z0-9]{1,4})\b/i)?.[1]
   if (mLbl) return mLbl.toUpperCase()
 
   const mLong = s.match(/\b(2UM|1UM|UM|US|DU|SOLO|SIMPLE)\b\s+\d{2,4}\s*m\b/i)?.[1]
@@ -135,7 +149,9 @@ export function extractFields(text: string): Fields {
 
   const material = "TGV 2N2"
   const linea =
-    s.match(/\b(?:LINEA|L[ÍI]NEA|LINEAS|L[ÍI]NEAS)\b\s*[:\-–]?\s*([0-9]{2,4}(?:\s*[-–]\s*[0-9]{2,4})?)/i)?.[1] ?? undefined
+    s.match(/\b(?:LINEA|L[ÍI]NEA|LINEAS|L[ÍI]NEAS)\b\s*[:\-–]?\s*([0-9]{2,4}(?:\s*[-–]\s*[0-9]{2,4})?)/i)?.[1] ??
+    undefined
+
   const lengthMeters =
     cleanNumber(s.match(/(\d{2,4})(?=\s*m\b)/i)?.[1] || s.match(/(\d{2,4})(?=m\b)/i)?.[1]) ?? undefined
   const massTons =
@@ -174,7 +190,14 @@ async function readPdfFirstPage(file: File): Promise<string> {
 }
 
 function textLooksUsable(hay: string): boolean {
-  const patterns = [/\bTREN\b/i, /\bCOMPOSIC/i, /\bFECHA\b/i, /\bLINEA/i, /\d{2,4}\s*m\b/i, /\d{2,4}\s*t\b/i]
+  const patterns = [
+    /\bTREN\b/i,
+    /\bCOMPOSIC/i,
+    /\bFECHA\b/i,
+    /\bLINEA/i,
+    /\d{2,4}\s*m\b/i,
+    /\d{2,4}\s*t\b/i,
+  ]
   return patterns.some((re) => re.test(hay))
 }
 
@@ -211,7 +234,15 @@ export async function handleFile(file: File): Promise<Fields> {
         const mod = await import("./ocrRouter")
         ocrFallbackFn = mod.ocrFallback
       }
-      const textB = await ocrFallbackFn(file)
+
+      // ✅ garde-fou : si l'OCR se bloque (offline), on coupe au bout de OCR_TIMEOUT_MS
+      const textB = await Promise.race([
+        ocrFallbackFn(file),
+        new Promise<string>((_, reject) =>
+          window.setTimeout(() => reject(new Error("OCR timeout")), OCR_TIMEOUT_MS)
+        ),
+      ])
+
       const fieldsB = extractFields(textB || "")
       fields = mergePreferA(fieldsA, fieldsB)
     } catch (err) {
