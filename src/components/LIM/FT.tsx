@@ -44,6 +44,37 @@ export default function FT({ variant = "classic" }: FTProps) {
   // mode test (active les overlays de debug FT)
   const [testModeEnabled, setTestModeEnabled] = useState(false);
 
+  // État GPS pour l'UI (couleur de l'indicateur de position)
+  type GpsStateUi = "RED" | "ORANGE" | "GREEN";
+  const [gpsStateUi, setGpsStateUi] = useState<GpsStateUi>("RED");
+
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const ce = e as CustomEvent<any>;
+      const s = ce?.detail?.state as GpsStateUi | undefined;
+
+      if (s === "RED" || s === "ORANGE" || s === "GREEN") {
+        setGpsStateUi(s);
+
+        // ✅ Sync du mode de référence sur la règle actuelle :
+        // - RED => HORAIRE
+        // - ORANGE/GREEN => GPS
+        // (utile en test console, et cohérent avec la logique existante)
+        const nextMode: ReferenceMode = s === "RED" ? "HORAIRE" : "GPS";
+        if (referenceModeRef.current !== nextMode) {
+          referenceModeRef.current = nextMode;
+          setReferenceMode(nextMode);
+        }
+      }
+    };
+
+    window.addEventListener("lim:gps-state", handler as EventListener);
+    return () => {
+      window.removeEventListener("lim:gps-state", handler as EventListener);
+    };
+  }, []);
+
+
   const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
     const el = e.currentTarget;
     scrollContainerRef.current = el;
@@ -125,6 +156,12 @@ export default function FT({ variant = "classic" }: FTProps) {
       }
     }
 
+    // 🔎 Debug : mapping "index dans rowEls" -> "data-ft-row"
+    const firstDataAttr = rowEls[firstVisible]?.getAttribute("data-ft-row") ?? "";
+    const lastDataAttr = rowEls[lastVisible]?.getAttribute("data-ft-row") ?? "";
+    const firstDataRow = firstDataAttr ? parseInt(firstDataAttr, 10) : null;
+    const lastDataRow = lastDataAttr ? parseInt(lastDataAttr, 10) : null;
+
     console.log(
       "[FT][scroll] scrollTop=",
       scrollTop,
@@ -135,6 +172,23 @@ export default function FT({ variant = "classic" }: FTProps) {
     );
     console.log("[FT][visible-rows] first=", firstVisible, "last=", lastVisible);
 
+    // 🔎 Debug renforcé : on affiche aussi les attributs bruts pour diagnostiquer
+    console.log(
+      "[FT][VISIBLE_ROWS_DATA_ROW]",
+      "firstVisible=",
+      firstVisible,
+      "lastVisible=",
+      lastVisible,
+      "| firstAttr=",
+      firstDataAttr,
+      "lastAttr=",
+      lastDataAttr,
+      "| firstDataRow=",
+      firstDataRow,
+      "lastDataRow=",
+      lastDataRow
+    );
+
     // log labo
     logTestEvent("ft:scroll:viewport", {
       scrollTop,
@@ -142,15 +196,32 @@ export default function FT({ variant = "classic" }: FTProps) {
       rowCount: rowEls.length,
       firstVisible,
       lastVisible,
+
+      // indices "réels" côté data
+      firstDataRow,
+      lastDataRow,
+
       autoScrollEnabled,
       referenceMode: referenceModeRef.current,
       isManualScroll: isManualScrollRef.current,
       isProgrammaticScroll: isProgrammaticScrollRef.current,
     });
 
-    // on met à jour le state
-    setVisibleRows({ first: firstVisible, last: lastVisible });
+    // on met à jour le state : ✅ indices "réels" (data-ft-row) si disponibles
+    const nextFirst =
+      typeof firstDataRow === "number" && Number.isFinite(firstDataRow)
+        ? firstDataRow
+        : firstVisible;
+
+    const nextLast =
+      typeof lastDataRow === "number" && Number.isFinite(lastDataRow)
+        ? lastDataRow
+        : lastVisible;
+
+    setVisibleRows({ first: nextFirst, last: nextLast });
   };
+
+
 
   //
   // ===== 1. NUMÉRO DE TRAIN ET PORTION DE PARCOURS ===================
@@ -161,6 +232,7 @@ export default function FT({ variant = "classic" }: FTProps) {
   const [trainNumber, setTrainNumber] = useState<number | null>(null);
 
   const [routeStart, setRouteStart] = useState<string>("");
+
   const [routeEnd, setRouteEnd] = useState<string>("");
 
   // 🕐 Heures détectées (reçues via ft:heures)
@@ -444,6 +516,203 @@ export default function FT({ variant = "classic" }: FTProps) {
 
   // Référence vers le conteneur scrollable de FTScrolling
   const scrollContainerRef = React.useRef<HTMLDivElement | null>(null);
+
+    // Position verticale "continue" du train (px dans le viewport scrollable)
+  const [trainPosYpx, setTrainPosYpx] = useState<number | null>(null);
+
+  useEffect(() => {
+    const TICK_MS = 250;
+
+    const parsePkFromRow = (tr: HTMLTableRowElement): number | null => {
+      // Sit Km = 3e colonne
+      const td = tr.querySelector<HTMLTableCellElement>("td:nth-child(3)");
+      const txt = td?.textContent?.trim() ?? "";
+      const n = Number(txt.replace(",", "."));
+      return Number.isFinite(n) ? n : null;
+    };
+
+    const rowCenterY = (container: HTMLDivElement, tr: HTMLTableRowElement): number => {
+      const VISUAL_OFFSET_PX = -2;
+      return tr.offsetTop + tr.offsetHeight / 2 - container.scrollTop + VISUAL_OFFSET_PX;
+    };
+
+    const clampInViewportOrKeep = (y: number, h: number): number | null => {
+      // Si hors viewport, on ne force pas à 0 (on garde la dernière valeur)
+      if (y < 0 || y > h) return null;
+      return y;
+    };
+
+    const tick = () => {
+      const container = scrollContainerRef.current;
+      if (!container) return;
+
+      const h = container.clientHeight;
+
+      // =========================
+      // 1) GPS : interpolation PK (DOM)
+      // =========================
+      if (referenceModeRef.current === "GPS") {
+        const pkRaw = lastGpsPositionRef.current?.pk;
+        const pkTrain =
+          typeof pkRaw === "number" && Number.isFinite(pkRaw) ? pkRaw : null;
+
+        if (pkTrain != null) {
+          const rows = Array.from(
+            container.querySelectorAll<HTMLTableRowElement>("tr.ft-row-main")
+          );
+
+          const pts: { pk: number; y: number }[] = [];
+          for (const tr of rows) {
+            const td = tr.querySelector<HTMLTableCellElement>("td:nth-child(3)");
+            const txt = td?.textContent?.trim() ?? "";
+            const pk = Number(txt.replace(",", "."));
+            if (!Number.isFinite(pk)) continue;
+
+            const VISUAL_OFFSET_PX = -2;
+            const y = tr.offsetTop + tr.offsetHeight / 2 - container.scrollTop + VISUAL_OFFSET_PX;
+            if (y < 0 || y > h) continue;
+
+            pts.push({ pk, y });
+          }
+
+          if (pts.length >= 2) {
+            pts.sort((a, b) => a.pk - b.pk);
+
+            let a = pts[0];
+            let b = pts[pts.length - 1];
+
+            for (let i = 0; i < pts.length - 1; i++) {
+              const p0 = pts[i];
+              const p1 = pts[i + 1];
+              if (pkTrain >= p0.pk && pkTrain <= p1.pk) {
+                a = p0;
+                b = p1;
+                break;
+              }
+            }
+
+            if (b.pk !== a.pk) {
+              let t = (pkTrain - a.pk) / (b.pk - a.pk);
+              if (t < 0) t = 0;
+              if (t > 1) t = 1;
+
+              const y = a.y + t * (b.y - a.y);
+              setTrainPosYpx(Math.round(y));
+              return;
+            } else {
+              setTrainPosYpx(Math.round(a.y));
+              return;
+            }
+          }
+        }
+      }
+
+      // =========================================
+      // 2) HORAIRE : interpolation temps (DOM)
+      // =========================================
+      if (referenceModeRef.current === "HORAIRE" && autoScrollEnabledRef.current) {
+        const base = autoScrollBaseRef.current;
+        if (base) {
+          // heure "effective" à la seconde (minutes float)
+          const now = new Date();
+          const nowMinFloat =
+            now.getHours() * 60 + now.getMinutes() + now.getSeconds() / 60;
+
+          const effectiveMinFloat = base.firstHoraMin + (nowMinFloat - base.realMin);
+
+          const rows = Array.from(
+            container.querySelectorAll<HTMLTableRowElement>("tr.ft-row-main")
+          );
+
+          const parseMinutesFromRow = (tr: HTMLTableRowElement): number | null => {
+            // ✅ uniquement les heures "réelles" (noir) : on ignore les heures théoriques (gris/italique)
+            const dep = tr.querySelector<HTMLSpanElement>(
+              "td:nth-child(6) .ft-hora-depart"
+            );
+            const txt = (dep?.textContent ?? "").trim();
+
+            const m = /^(\d{1,2}):(\d{2})$/.exec(txt);
+            if (!m) return null;
+
+            const hh = Number(m[1]);
+            const mm = Number(m[2]);
+            if (!Number.isFinite(hh) || !Number.isFinite(mm)) return null;
+
+            return hh * 60 + mm;
+          };
+
+
+          const pts: { m: number; y: number }[] = [];
+          for (const tr of rows) {
+            const m = parseMinutesFromRow(tr);
+            if (m == null) continue;
+
+            const VISUAL_OFFSET_PX = -2;
+            const y = tr.offsetTop + tr.offsetHeight / 2 - container.scrollTop + VISUAL_OFFSET_PX;
+            if (y < 0 || y > h) continue;
+
+            pts.push({ m, y });
+          }
+
+          if (pts.length >= 2) {
+            pts.sort((a, b) => a.m - b.m);
+
+            let a = pts[0];
+            let b = pts[pts.length - 1];
+
+            for (let i = 0; i < pts.length - 1; i++) {
+              const p0 = pts[i];
+              const p1 = pts[i + 1];
+              if (effectiveMinFloat >= p0.m && effectiveMinFloat <= p1.m) {
+                a = p0;
+                b = p1;
+                break;
+              }
+            }
+
+            if (b.m !== a.m) {
+              let t = (effectiveMinFloat - a.m) / (b.m - a.m);
+              if (t < 0) t = 0;
+              if (t > 1) t = 1;
+
+              const y = a.y + t * (b.y - a.y);
+              setTrainPosYpx(Math.round(y));
+              return;
+            } else {
+              setTrainPosYpx(Math.round(a.y));
+              return;
+            }
+          }
+        }
+      }
+
+      // =========================
+      // 3) fallback : ligne active
+      // =========================
+      const tr = container.querySelector<HTMLTableRowElement>(
+        `tr.ft-row-main[data-ft-row="${activeRowIndex}"]`
+      );
+      if (!tr) return;
+
+      const VISUAL_OFFSET_PX = -2;
+      const y = tr.offsetTop + tr.offsetHeight / 2 - container.scrollTop + VISUAL_OFFSET_PX;
+
+      // ✅ Au lieu de geler : on borne dans le viewport
+      const clamped = Math.max(0, Math.min(y, h));
+      setTrainPosYpx(Math.round(clamped));
+    };
+
+
+    tick();
+
+    const id = window.setInterval(tick, TICK_MS);
+    return () => window.clearInterval(id);
+  }, [activeRowIndex]);
+
+
+
+
+  
 
   // Dernière position GPS reçue (mémorisée pour les futurs calculs)
   const lastGpsPositionRef = React.useRef<GpsPosition | null>(null);
@@ -4215,6 +4484,89 @@ onClick={() => {
           onContainerRef={(el) => {
             scrollContainerRef.current = el;
           }}
+          overlay={
+            (() => {
+              const color =
+                referenceMode === "HORAIRE"
+                  ? "red"
+                  : gpsStateUi === "GREEN"
+                  ? "#16a34a" // vert (proche de tes codes GPS)
+                  : gpsStateUi === "ORANGE"
+                  ? "#f97316" // orange
+                  : "red"; // GPS RED
+
+              return (
+                <div
+                  style={{
+                    position: "absolute",
+
+                    // ✅ Étape 4-2b : top piloté par le state (timer) si dispo
+                    top:
+                      typeof trainPosYpx === "number" && Number.isFinite(trainPosYpx)
+                        ? `${trainPosYpx}px`
+                        : (() => {
+                            const container = scrollContainerRef.current;
+                            if (!container) return "40vh";
+
+                            const row = container.querySelector<HTMLTableRowElement>(
+                              `tr.ft-row-main[data-ft-row="${activeRowIndex}"]`
+                            );
+                            if (!row) return "40vh";
+
+                            const VISUAL_OFFSET_PX = -2;
+                            const y =
+                              row.offsetTop +
+                              row.offsetHeight / 2 -
+                              container.scrollTop +
+                              VISUAL_OFFSET_PX;
+
+                            const clamped = Math.max(0, Math.min(y, container.clientHeight));
+                            return `${Math.round(clamped)}px`;
+                          })(),
+
+
+
+                    left: "13%", // début colonne V Max (après Bloqueo 13%)
+                    width: "14%", // V Max (5%) + Sit Km (9%)
+                    display: "flex",
+                    alignItems: "center",
+                    pointerEvents: "none",
+                    zIndex: 999,
+                  }}
+                >
+                  {/* Triangle gauche (pointe vers l’intérieur = vers la droite) */}
+                  <div
+                    style={{
+                      width: 0,
+                      height: 0,
+                      borderTop: "6px solid transparent",
+                      borderBottom: "6px solid transparent",
+                      borderLeft: `10px solid ${color}`,
+                    }}
+                  />
+                  {/* Barre */}
+                  <div
+                    style={{
+                      flex: 1,
+                      height: "2px",
+                      background: color,
+                    }}
+                  />
+                  {/* Triangle droite (pointe vers l’intérieur = vers la gauche) */}
+                  <div
+                    style={{
+                      width: 0,
+                      height: 0,
+                      borderTop: "6px solid transparent",
+
+                      borderBottom: "6px solid transparent",
+                      borderRight: `10px solid ${color}`,
+                    }}
+                  />
+                </div>
+              );
+            })()
+          }
         >
           <div className="ft-body-scroll" onClick={handleBodyClick}>
             <table className="ft-table">
@@ -4222,6 +4574,8 @@ onClick={() => {
             </table>
           </div>
         </FTScrolling>
+
+
       </div>
     </section>
   );
