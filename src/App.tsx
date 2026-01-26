@@ -312,7 +312,18 @@ export default function App() {
                 )}
               </div>
 
-              <div className="mt-2 flex justify-end">
+              <div className="mt-2 flex items-center justify-between gap-3">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setUpdateToastOpen(false)
+                    window.dispatchEvent(new CustomEvent("lim:about-open"))
+                  }}
+                  className="text-xs font-semibold underline opacity-80 hover:opacity-100"
+                >
+                  Voir le changelog
+                </button>
+
                 <button
                   type="button"
                   onClick={() => setUpdateToastOpen(false)}
@@ -323,6 +334,7 @@ export default function App() {
               </div>
             </div>
           </div>
+
         )}
 
 

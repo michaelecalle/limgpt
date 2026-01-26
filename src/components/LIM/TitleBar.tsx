@@ -11,6 +11,7 @@ import { initGpsPkEngine, projectGpsToPk } from '../../lib/gpsPkEngine'
 import { getOcrOnlineEnabled, setOcrOnlineEnabled } from '../../lib/ocrSettings'
 import { uploadPdfToSynology } from '../../lib/synologyUpload'
 
+import { APP_VERSION } from '../version'
 
 type LIMFields = {
   tren?: string
@@ -210,6 +211,87 @@ export default function TitleBar() {
   })
 
   const [folded, setFolded] = useState(false)
+
+    // ----- INFOS (à afficher depuis la roue dentée) -----
+  const [aboutOpen, setAboutOpen] = useState(false)
+  // ✅ Fermeture du menu Paramètres quand clic en dehors
+  const settingsDetailsRef = useRef<HTMLDetailsElement | null>(null)
+
+  useEffect(() => {
+    const onPointerDown = (e: PointerEvent) => {
+      const el = settingsDetailsRef.current
+      if (!el) return
+
+      const isOpen = el.hasAttribute('open')
+      if (!isOpen) return
+
+      const target = e.target as Node | null
+      if (!target) return
+
+      // Si clic en dehors du <details>, on ferme
+      if (!el.contains(target)) {
+        el.removeAttribute('open')
+      }
+    }
+
+    document.addEventListener('pointerdown', onPointerDown, { capture: true })
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown, { capture: true } as any)
+    }
+  }, [])
+
+  const CHANGELOG_TEXT = `🆕 Changelog – dernières évolutions
+
+🔧 Fiabilisation du suivi de position
+- Amélioration du suivi GPS avec projection PK plus robuste.
+- Gestion claire des états GPS : Vert / Orange / Rouge.
+- Conservation de la dernière position valide affichée en cas de perte temporaire du signal.
+
+📍 Indicateur de position en temps réel
+- Ajout d’une barre de position dynamique dans la FT.
+- Se déplace progressivement en fonction du temps (mode horaire) ou du GPS.
+- Suit précisément les recalages manuels.
+
+⏱️ Mode horaire plus fiable
+- Utilisation exclusive des heures réelles de début et de fin de portion.
+- Les heures intermédiaires calculées (gris / italique) ne sont plus utilisées comme référence.
+
+📐 Correction d’un bug d’affichage sur iPad
+- Correction d’un problème où la FT ne prenait pas toute la hauteur lors du premier passage en mode plié.
+- Recalcul fiable de la hauteur disponible après pliage/dépliage et import.
+
+🔄 Mise à jour automatique de l’application
+- Détection d’une nouvelle version basée sur le build déployé.
+- Les utilisateurs ont toujours la dernière version après rechargement (PWA / Safari).
+- Ajout d’un toast non bloquant : “✅ LIM a été mise à jour”.
+
+🧩 Correction – Import PDF
+- Correction d’un bug dans le bouton Importer PDF.
+
+🏷️ Versionnage visible
+- Affichage clair de la version de l’application sur l’écran d’accueil (mode bleu).
+- Synchronisation fiable entre version locale et version déployée sur Vercel.
+
+ℹ️ À propos & changelog
+- Ajout d’une section “À propos” dans le menu Paramètres.
+- Affichage de la version et du changelog dans une fenêtre dédiée.`
+
+
+  // ✅ Ouverture du panneau "À propos" depuis ailleurs (ex: toast App)
+  useEffect(() => {
+    const handler = () => {
+      setAboutOpen(true)
+      // Bonus : si le menu Paramètres est ouvert, on le ferme
+      if (settingsDetailsRef.current?.hasAttribute('open')) {
+        settingsDetailsRef.current.removeAttribute('open')
+      }
+    }
+
+    window.addEventListener('lim:about-open', handler as EventListener)
+    return () => {
+      window.removeEventListener('lim:about-open', handler as EventListener)
+    }
+  }, [])
 
     // ----- MISE À JOUR PWA (Service Worker) -----
   const [swUpdateAvailable, setSwUpdateAvailable] = useState(false)
@@ -1535,7 +1617,7 @@ onClick={async () => {
             </button>
           )}
           {/* Paramètres */}
-          <details className="relative">
+          <details ref={settingsDetailsRef} className="relative">
             <summary
               className="list-none h-8 w-10 rounded-md bg-zinc-200 text-zinc-800 dark:bg-zinc-700 dark:text-zinc-100 flex items-center justify-center cursor-pointer select-none"
               title="Paramètres"
@@ -1559,7 +1641,7 @@ onClick={async () => {
 
             <div className="absolute right-0 mt-2 w-72 rounded-xl bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 shadow-lg p-3 text-xs z-[9999]">
               <div className="text-[11px] font-semibold opacity-70 mb-2">
-                Paramètres (provisoire)
+                Paramètres
               </div>
 
               {/* Toggle MODE TEST (branché) */}
@@ -1697,10 +1779,75 @@ onClick={async () => {
               </label>
 
 
+              <div className="h-px bg-zinc-200/80 dark:bg-zinc-700/80 my-2" />
+
+              {/* À propos */}
+              <button
+                type="button"
+                onClick={() => {
+                  // ✅ Simulation : on bloque les commandes de l'app (seul le player agit)
+                  if (simulationEnabled) {
+                    logTestEvent('ui:blocked', {
+                      control: 'about',
+                      source: 'settings',
+                    })
+                    return
+                  }
+
+                  logTestEvent('ui:about:open', { source: 'settings' })
+                  setAboutOpen(true)
+                }}
+                className="w-full flex items-start justify-between gap-3 py-1 cursor-pointer select-none rounded-md hover:bg-zinc-100 dark:hover:bg-zinc-800 transition px-0"
+              >
+                <div className="text-left">
+                  <div className="font-semibold">À propos</div>
+                  <div className="text-[11px] opacity-70">LIM — version & changelog</div>
+                </div>
+              </button>
+
+
 
             </div>
           </details>
 
+          {/* ✅ Fenêtre "À propos" */}
+          {aboutOpen && (
+            <div
+              className="fixed inset-0 z-[99999] flex items-center justify-center bg-black/40 backdrop-blur-[1px]"
+              onClick={() => setAboutOpen(false)}
+            >
+              <div
+                className="w-[min(900px,92vw)] max-h-[85vh] rounded-2xl bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 shadow-lg p-4"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <div className="text-lg font-semibold">LIM</div>
+                    <div className="text-xs opacity-70 tabular-nums">
+                      Version {APP_VERSION}
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => setAboutOpen(false)}
+                    className="h-8 px-3 text-xs rounded-md bg-zinc-200/70 text-zinc-800 dark:bg-zinc-700/70 dark:text-zinc-100 font-semibold"
+                  >
+                    Fermer
+                  </button>
+                </div>
+
+                <div className="h-px bg-zinc-200/80 dark:bg-zinc-700/80 my-3" />
+
+                <div
+                  className="rounded-xl bg-zinc-50 dark:bg-zinc-800/40 border border-zinc-200/70 dark:border-zinc-700/70 p-3 text-xs whitespace-pre-wrap overflow-auto"
+                  style={{ maxHeight: "65vh" }}
+                >
+                  {CHANGELOG_TEXT}
+                </div>
+              </div>
+            </div>
+          )}
 
 
           <input
