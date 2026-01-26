@@ -92,6 +92,7 @@ import { APP_VERSION } from "./components/version"
 export default function App() {
   const [pdfMode, setPdfMode] = React.useState<"blue" | "green" | "red">("blue")
   const [foldInfosLtv, setFoldInfosLtv] = React.useState(false)
+
   const [isDark, setIsDark] = React.useState(() => {
     if (typeof document === "undefined") return false
     const html = document.documentElement
@@ -100,9 +101,32 @@ export default function App() {
       html.getAttribute("data-theme") === "dark"
     )
   })
+
+  // ✅ Toast "mise à jour" (déclenché si APP_VERSION change)
+  const [updateToastOpen, setUpdateToastOpen] = React.useState(false)
+  const [updatePrevVersion, setUpdatePrevVersion] = React.useState<string | null>(null)
+
+  React.useEffect(() => {
+    try {
+      const KEY = "lim:lastVersionSeen"
+      const last = localStorage.getItem(KEY)
+
+      if (last && last !== APP_VERSION) {
+        setUpdatePrevVersion(last)
+        setUpdateToastOpen(true)
+        window.setTimeout(() => setUpdateToastOpen(false), 8000)
+      }
+
+      localStorage.setItem(KEY, APP_VERSION)
+    } catch {
+      // non bloquant
+    }
+  }, [])
+
   const [pdfUrl, setPdfUrl] = React.useState<string | null>(null)
   const [rawPdfFile, setRawPdfFile] = React.useState<File | null>(null)
   const [pdfPageImages, setPdfPageImages] = React.useState<string[]>([])
+
 
     // ============================================================
   // REPLAY BOOTSTRAP (sans UI) — expose un player dans la console
@@ -272,6 +296,35 @@ export default function App() {
         {/* Bandeau titre */}
         <TitleBar />
         <ReplayOverlay />
+
+        {/* ✅ Toast mise à jour */}
+        {updateToastOpen && (
+          <div className="fixed top-3 right-3 z-[99999]">
+            <div className="rounded-xl shadow-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-4 py-3 text-sm">
+              <div className="font-semibold">✅ LIM a été mise à jour</div>
+              <div className="mt-1 text-xs opacity-70">
+                {updatePrevVersion ? (
+                  <>
+                    {updatePrevVersion} → {APP_VERSION}
+                  </>
+                ) : (
+                  APP_VERSION
+                )}
+              </div>
+
+              <div className="mt-2 flex justify-end">
+                <button
+                  type="button"
+                  onClick={() => setUpdateToastOpen(false)}
+                  className="text-xs font-semibold px-2 py-1 rounded-md bg-zinc-200/70 dark:bg-zinc-700/70"
+                >
+                  OK
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
 
 
         {/* MODE BLEU : rendu dédié */}
