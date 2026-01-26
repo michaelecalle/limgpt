@@ -24,6 +24,18 @@ if not defined HASCHANGES (
 
 REM --- 3) git add (tous les fichiers listes par status)
 REM git add -A est l'equivalent pratique : ajoute modifs + nouveaux fichiers + suppressions
+REM --- 3bis) Ecrire src/buildInfo.ts avec date/heure lisible (BUILD_TIME)
+set BUILD_TIME=%date% %time%
+set BUILD_TIME=%BUILD_TIME:~0,-3%
+
+REM Echapper les backslashes et quotes si besoin (simple ici : on garde en texte brut)
+echo export const BUILD_TIME = "%BUILD_TIME%";> src\buildInfo.ts
+echo export const BUILD_HASH = "";>> src\buildInfo.ts
+
+echo.
+echo --- buildInfo.ts genere ---
+type src\buildInfo.ts
+
 echo.
 echo --- git add -A ---
 git add -A

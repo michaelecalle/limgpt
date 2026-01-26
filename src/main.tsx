@@ -5,8 +5,14 @@ import "./lib/setTitleFromTrain"
 import './index.css'
 import React from 'react'
 import ReactDOM from 'react-dom/client'
-import { APP_VERSION } from "./components/version";
-console.log(`[LIMGPT ${APP_VERSION}] démarre`);
+import { BUILD_TIME, BUILD_HASH } from './buildInfo'
+
+const buildLabel = BUILD_HASH && BUILD_HASH.trim().length > 0
+  ? `${BUILD_TIME} (${BUILD_HASH})`
+  : BUILD_TIME
+
+console.log(`[LIMGPT ${buildLabel}] démarre`)
+
 
 
 // ✅ Import unique pour initialiser l’écoute du bouton "Importer PDF"
