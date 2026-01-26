@@ -247,17 +247,48 @@ export default function TitleBar() {
 
     let cancelled = false
 
-    const check = async () => {
+    const markIfWaiting = (reg: ServiceWorkerRegistration | null, reason: string) => {
+      if (!reg) return
+      swRegRef.current = reg
+
+      if (reg.waiting && navigator.serviceWorker.controller) {
+        setSwUpdateAvailable(true)
+        console.log('[TitleBar][SW] update available (waiting)', reason)
+      }
+    }
+
+    const attachUpdateFound = (reg: ServiceWorkerRegistration) => {
+      // Quand un nouveau SW arrive (installing), on surveille jusqu’à "installed"
+      reg.addEventListener('updatefound', () => {
+        const nw = reg.installing
+        if (!nw) return
+
+        const onState = () => {
+          if (cancelled) return
+
+          // "installed" + controller présent => update dispo (waiting)
+          if (nw.state === 'installed' && navigator.serviceWorker.controller) {
+            markIfWaiting(reg, 'updatefound:installed')
+          }
+        }
+
+        nw.addEventListener('statechange', onState)
+      })
+    }
+
+    const check = async (reason: string) => {
       try {
         const reg = await navigator.serviceWorker.getRegistration()
         if (cancelled) return
 
-        swRegRef.current = reg ?? null
+        if (reg) {
+          attachUpdateFound(reg)
 
-        // Cas classique : un nouveau SW est déjà "waiting" => update dispo
-        if (reg?.waiting && navigator.serviceWorker.controller) {
-          setSwUpdateAvailable(true)
-          console.log('[TitleBar][SW] update available (waiting)')
+          // Provoquer une vérification (important sur iOS/PWA)
+          reg.update().catch(() => {})
+
+          // Cas où c’est déjà en attente
+          markIfWaiting(reg, reason)
         }
       } catch (err) {
         console.warn('[TitleBar][SW] check failed', err)
@@ -265,25 +296,26 @@ export default function TitleBar() {
     }
 
     // 1) check immédiat au boot
-    check()
+    check('boot')
 
-    // 2) écouter l’arrivée d’un nouvel SW
+    // 2) re-check léger après (iOS parfois tardif)
+    const t1 = window.setTimeout(() => check('boot+800ms'), 800)
+    const t2 = window.setTimeout(() => check('boot+2500ms'), 2500)
+
+    // Quand le nouveau SW prend la main, l’update n’est plus "en attente"
     const onControllerChange = () => {
-      // Quand le nouveau SW prend la main, on peut considérer que l’update n’est plus "en attente"
       setSwUpdateAvailable(false)
     }
-
     navigator.serviceWorker.addEventListener('controllerchange', onControllerChange)
-
-    // On peut aussi re-check après un court délai (iOS parfois tardif)
-    const t = window.setTimeout(() => check(), 800)
 
     return () => {
       cancelled = true
       navigator.serviceWorker.removeEventListener('controllerchange', onControllerChange)
-      window.clearTimeout(t)
+      window.clearTimeout(t1)
+      window.clearTimeout(t2)
     }
   }, [])
+
 
 
   // ✅ Auto-démarrage du test à l'ouverture de l'app (uniquement si mode test ON)
