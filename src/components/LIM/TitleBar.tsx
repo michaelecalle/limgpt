@@ -211,6 +211,81 @@ export default function TitleBar() {
 
   const [folded, setFolded] = useState(false)
 
+    // ----- MISE À JOUR PWA (Service Worker) -----
+  const [swUpdateAvailable, setSwUpdateAvailable] = useState(false)
+  const swRegRef = useRef<ServiceWorkerRegistration | null>(null)
+
+    const applySwUpdate = async () => {
+    try {
+      if (!('serviceWorker' in navigator)) return
+
+      const reg = swRegRef.current ?? (await navigator.serviceWorker.getRegistration())
+      if (!reg?.waiting) {
+        console.log('[TitleBar][SW] no waiting worker')
+        return
+      }
+
+      // Quand le nouveau SW devient contrôleur, on reload
+      const onCtrl = () => {
+        navigator.serviceWorker.removeEventListener('controllerchange', onCtrl)
+        window.location.reload()
+      }
+      navigator.serviceWorker.addEventListener('controllerchange', onCtrl)
+
+      // Demande au SW "waiting" de s’activer
+      reg.waiting.postMessage({ type: 'SKIP_WAITING' })
+      console.log('[TitleBar][SW] SKIP_WAITING sent')
+    } catch (err) {
+      console.warn('[TitleBar][SW] apply update failed', err)
+    }
+  }
+
+
+  useEffect(() => {
+    // Pas de SW => rien à faire
+    if (!('serviceWorker' in navigator)) return
+
+    let cancelled = false
+
+    const check = async () => {
+      try {
+        const reg = await navigator.serviceWorker.getRegistration()
+        if (cancelled) return
+
+        swRegRef.current = reg ?? null
+
+        // Cas classique : un nouveau SW est déjà "waiting" => update dispo
+        if (reg?.waiting && navigator.serviceWorker.controller) {
+          setSwUpdateAvailable(true)
+          console.log('[TitleBar][SW] update available (waiting)')
+        }
+      } catch (err) {
+        console.warn('[TitleBar][SW] check failed', err)
+      }
+    }
+
+    // 1) check immédiat au boot
+    check()
+
+    // 2) écouter l’arrivée d’un nouvel SW
+    const onControllerChange = () => {
+      // Quand le nouveau SW prend la main, on peut considérer que l’update n’est plus "en attente"
+      setSwUpdateAvailable(false)
+    }
+
+    navigator.serviceWorker.addEventListener('controllerchange', onControllerChange)
+
+    // On peut aussi re-check après un court délai (iOS parfois tardif)
+    const t = window.setTimeout(() => check(), 800)
+
+    return () => {
+      cancelled = true
+      navigator.serviceWorker.removeEventListener('controllerchange', onControllerChange)
+      window.clearTimeout(t)
+    }
+  }, [])
+
+
   // ✅ Auto-démarrage du test à l'ouverture de l'app (uniquement si mode test ON)
   useEffect(() => {
     if (testAutoStartedRef.current) return
@@ -1131,6 +1206,31 @@ export default function TitleBar() {
 
         {/* Droite — Contrôles */}
         <div className="flex items-center gap-2 relative z-10">
+
+                    {swUpdateAvailable && (
+            <button
+              type="button"
+              onClick={() => {
+                // ✅ Simulation : on bloque les commandes de l'app (seul le player agit)
+                if (simulationEnabled) {
+                  logTestEvent('ui:blocked', {
+                    control: 'swUpdate',
+                    source: 'titlebar',
+                  })
+                  return
+                }
+
+                logTestEvent('ui:sw:update:click', { source: 'titlebar' })
+                applySwUpdate()
+              }}
+              className="h-8 px-3 text-xs rounded-md bg-blue-600 text-white font-semibold flex items-center gap-2"
+              title="Nouvelle version disponible — cliquer pour mettre à jour"
+            >
+              <span className="inline-block h-2 w-2 rounded-full bg-white/90" />
+              MAJ
+            </button>
+          )}
+
 
           {/* Jour/Nuit */}
           <div className="relative inline-flex select-none items-center rounded-xl border p-0.5 text-[11px] shadow-sm border-zinc-200 dark:border-zinc-700">
