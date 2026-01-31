@@ -9,7 +9,7 @@ export type GpsPkProjection = {
   nearestLon?: number
 }
 
-import { RIBBON_POINTS } from './ligne050_ribbon'
+import { RIBBON_POINTS } from './ligne050_ribbon_dense'
 import { ANCRES_PK_S } from './ancres_pk_s'
 
 // drapeau simple : le moteur est prêt quand les données sont chargées
