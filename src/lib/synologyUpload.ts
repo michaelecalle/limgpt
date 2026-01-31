@@ -172,7 +172,7 @@ export async function uploadLogToOvh(
     const form = new FormData()
     form.append("token", token)
     form.append("logId", logId)
-    form.append("file", file, `${logId}.pdf`)
+    form.append("file", file, `${logId}.txt`)
 
     const res = await fetch(endpoint, { method: "POST", body: form })
     const text = await res.text()

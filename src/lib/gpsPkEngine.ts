@@ -63,18 +63,15 @@ function pkFromS(s_km: number | null | undefined): number | null {
   if (s_km == null || !Number.isFinite(s_km)) return null
   if (SORTED_ANCHORS.length === 0) return null
 
-  // avant la première ancre → on "clipse" sur la première
-  if (s_km <= SORTED_ANCHORS[0].s_km) {
-    return SORTED_ANCHORS[0].pk
-  }
-
-  // après la dernière ancre → on "clipse" sur la dernière
+  const first = SORTED_ANCHORS[0]
   const last = SORTED_ANCHORS[SORTED_ANCHORS.length - 1]
-  if (s_km >= last.s_km) {
-    return last.pk
+
+  // ✅ Hors domaine ancres => pas de PK (évite le "clip" qui fige à 752.4)
+  if (s_km < first.s_km || s_km > last.s_km) {
+    return null
   }
 
-  // recherche du segment [i, i+1] qui encadre s_km
+  // Recherche du segment [i, i+1] qui encadre s_km
   for (let i = 0; i < SORTED_ANCHORS.length - 1; i++) {
     const a = SORTED_ANCHORS[i]
     const b = SORTED_ANCHORS[i + 1]
@@ -90,9 +87,10 @@ function pkFromS(s_km: number | null | undefined): number | null {
     }
   }
 
-  // fallback (ne devrait pas arriver) → dernière ancre
-  return last.pk
+  // Fallback (ne devrait pas arriver si s_km est dans [first,last])
+  return null
 }
+
 
 /**
  * Initialisation du moteur GPS → PK.

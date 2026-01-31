@@ -625,11 +625,16 @@ export default function FT({ variant = "classic" }: FTProps) {
           );
 
           const parseMinutesFromRow = (tr: HTMLTableRowElement): number | null => {
-            // ✅ uniquement les heures "réelles" (noir) : on ignore les heures théoriques (gris/italique)
+            // ✅ Maintenant : on prend AUSSI les heures calculées (gris/italique)
+            // Priorité : heure réelle (noir) -> sinon heure théorique (gris)
             const dep = tr.querySelector<HTMLSpanElement>(
               "td:nth-child(6) .ft-hora-depart"
             );
-            const txt = (dep?.textContent ?? "").trim();
+            const theo = tr.querySelector<HTMLSpanElement>(
+              "td:nth-child(6) .ft-hora-theo"
+            );
+
+            const txt = ((dep?.textContent ?? theo?.textContent) ?? "").trim();
 
             const m = /^(\d{1,2}):(\d{2})$/.exec(txt);
             if (!m) return null;
@@ -640,6 +645,7 @@ export default function FT({ variant = "classic" }: FTProps) {
 
             return hh * 60 + mm;
           };
+
 
 
           const pts: { m: number; y: number }[] = [];
