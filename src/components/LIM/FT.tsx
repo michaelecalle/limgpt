@@ -494,7 +494,8 @@ export default function FT({ variant = "classic" }: FTProps) {
 
   const autoScrollBaseRef =
     React.useRef<{
-      realMin: number
+      realMinInt: number       // minutes entières — pour updateFromClock (ligne active)
+      realMinFloat: number     // minutes + secondes — pour interpolation continue (barre rouge)
       firstHoraMin: number
       fixedDelay: number       // minutes (arrondi, pour l'affichage actuel)
       deltaSec: number         // secondes (signé, exact au moment du Play)
@@ -623,7 +624,8 @@ export default function FT({ variant = "classic" }: FTProps) {
           const nowMinFloat =
             now.getHours() * 60 + now.getMinutes() + now.getSeconds() / 60;
 
-          const effectiveMinFloat = base.firstHoraMin + (nowMinFloat - base.realMin);
+          const effectiveMinFloat =
+            base.firstHoraMin + (nowMinFloat - (base.realMinFloat ?? base.realMinInt));
 
           const rows = Array.from(
             container.querySelectorAll<HTMLTableRowElement>("tr.ft-row-main")
@@ -1187,6 +1189,7 @@ const computeFixedDelay = (now: Date, ftMinutes: number) => {
     const captureBaseFromFirstRow = () => {
       const now = new Date();
       const nowMin = now.getHours() * 60 + now.getMinutes();
+      const nowMinFloat = nowMin + now.getSeconds() / 60;
 
       // première minute dispo (heure réelle ou théorique) sur la portion affichée
       let firstHoraMin: number | null = null;
@@ -1200,21 +1203,22 @@ const computeFixedDelay = (now: Date, ftMinutes: number) => {
 
       if (firstHoraMin == null) return null;
 
-    const { fixedDelayMin: fixedDelay, deltaSec } = computeFixedDelay(now, firstHoraMin)
-    return { realMin: nowMin, firstHoraMin, fixedDelay, deltaSec };
-  };
+      const { fixedDelayMin: fixedDelay, deltaSec } = computeFixedDelay(now, firstHoraMin)
+      return { realMinInt: nowMin, realMinFloat: nowMinFloat, firstHoraMin, fixedDelay, deltaSec };
+    };
 
 
   // Base "mode Standby" : à partir de la ligne sélectionnée
   const captureBaseFromRowIndex = (rowIndex: number) => {
     const now = new Date();
     const nowMin = now.getHours() * 60 + now.getMinutes();
+    const nowMinFloat = nowMin + now.getSeconds() / 60;
 
     const rowMin = horaTheoMinutesByIndex[rowIndex];
     if (typeof rowMin !== "number" || !Number.isFinite(rowMin)) return null;
 
     const { fixedDelayMin: fixedDelay, deltaSec } = computeFixedDelay(now, rowMin);
-    return { realMin: nowMin, firstHoraMin: rowMin, fixedDelay, deltaSec };
+    return { realMinInt: nowMin, realMinFloat: nowMinFloat, firstHoraMin: rowMin, fixedDelay, deltaSec };
   };
 
 
@@ -1301,7 +1305,7 @@ const computeFixedDelay = (now: Date, ftMinutes: number) => {
       const nowMin = now.getHours() * 60 + now.getMinutes();
 
       // minutes écoulées depuis l’activation
-      const elapsed = nowMin - base.realMin;
+      const elapsed = nowMin - base.realMinInt;
 
       // heure FT qu’on veut suivre
       const effectiveMin = base.firstHoraMin + elapsed;
