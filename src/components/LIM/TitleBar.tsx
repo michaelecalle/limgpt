@@ -3,8 +3,13 @@ import {
   startTestSession,
   stopTestSession,
   exportTestLog,
+  exportTestLogLocal,
+  queueCurrentTestLogForUpload,
+  flushQueuedTestLogUploads,
   logTestEvent,
 } from '../../lib/testLogger'
+
+
 
 import { initGpsPkEngine, projectGpsToPk } from '../../lib/gpsPkEngine'
 
@@ -142,6 +147,20 @@ export default function TitleBar() {
   const [scheduleDelta, setScheduleDelta] = useState<string | null>(null)
   const [scheduleDeltaIsLarge, setScheduleDeltaIsLarge] = useState(false)
 
+  // ✅ delta précis (en secondes) si FT le fournit
+  const [scheduleDeltaSec, setScheduleDeltaSec] = useState<number | null>(null)
+
+  const formatSignedHMS = (deltaSec: number): string => {
+    const sign = deltaSec < 0 ? '-' : '+'
+    const abs = Math.abs(deltaSec)
+    const hh = Math.floor(abs / 3600)
+    const mm = Math.floor((abs % 3600) / 60)
+    const ss = abs % 60
+    const pad2 = (n: number) => String(n).padStart(2, '0')
+    // si < 1h, on affiche mm:ss ; sinon h:mm:ss
+    return hh > 0 ? `${sign}${hh}:${pad2(mm)}:${pad2(ss)}` : `${sign}${mm}:${pad2(ss)}`
+  }
+
   // ----- GPS / PK (moteur labo) -----
   const [gpsPkReady, setGpsPkReady] = useState(false)
   const gpsWatchIdRef = useRef<number | null>(null)
@@ -180,12 +199,25 @@ export default function TitleBar() {
 
   // Diffusion du mode test (pilotage global FT / overlays)
   useEffect(() => {
+    // 1) émission immédiate
     window.dispatchEvent(
       new CustomEvent('lim:test-mode', {
         detail: { enabled: testModeEnabled },
       })
     )
+
+    // 2) ✅ re-émission courte : rattrape les listeners montés après (race au boot)
+    const t = window.setTimeout(() => {
+      window.dispatchEvent(
+        new CustomEvent('lim:test-mode', {
+          detail: { enabled: testModeEnabled },
+        })
+      )
+    }, 400)
+
+    return () => window.clearTimeout(t)
   }, [testModeEnabled])
+
 
 
   // ----- NUMÉRO DE TRAIN + TYPE + COMPOSITION -----
@@ -761,8 +793,19 @@ export default function TitleBar() {
   useEffect(() => {
     const handler = (e: Event) => {
       const ce = e as CustomEvent
+
+      // ✅ PROUVE ce que la TitleBar reçoit réellement
+      console.log('[TitleBar] lim:schedule-delta detail =', ce?.detail)
+
       const rawText = ce?.detail?.text as string | null | undefined
       const isLarge = !!ce?.detail?.isLargeDelay
+
+      // ✅ delta précis (secondes) optionnel — sera utilisé si présent
+      const deltaSecRaw = ce?.detail?.deltaSec
+      const deltaSec =
+        typeof deltaSecRaw === 'number' && Number.isFinite(deltaSecRaw)
+          ? Math.trunc(deltaSecRaw)
+          : null
 
       const text =
         rawText && rawText.trim().length > 0 ? rawText.trim() : null
@@ -776,10 +819,29 @@ export default function TitleBar() {
       if (text) {
         setScheduleDelta(text)
         setScheduleDeltaIsLarge(isLarge)
+
+        // ✅ Ne PAS écraser si l'event ne fournit pas deltaSec
+        if (deltaSec !== null) {
+          setScheduleDeltaSec(deltaSec)
+        }
+
+        // log labo : ce que la TitleBar reçoit et ce qu'elle va afficher
+        logTestEvent('ui:schedule-delta', {
+          text,
+          isLarge,
+          deltaSec,
+        })
       } else {
         // si on envoie texte vide ou null -> on efface
         setScheduleDelta(null)
         setScheduleDeltaIsLarge(false)
+        setScheduleDeltaSec(null)
+
+        logTestEvent('ui:schedule-delta', {
+          text: null,
+          isLarge: false,
+          deltaSec: null,
+        })
       }
     }
 
@@ -952,7 +1014,7 @@ export default function TitleBar() {
           return
         }
 
-        const { pk, s_km, distance_m, nearestIdx, nearestLat, nearestLon } = proj
+        const { pk, s_km, distance_m, nearestIdx, nearestLat, nearestLon, pkCandidate, pkDecision } = proj
         const dist = distance_m ?? null
         const onLine = dist != null && dist <= 200
 
@@ -979,7 +1041,12 @@ export default function TitleBar() {
           nearestIdx: typeof nearestIdx === 'number' ? nearestIdx : null,
           nearestLat: typeof nearestLat === 'number' ? nearestLat : null,
           nearestLon: typeof nearestLon === 'number' ? nearestLon : null,
+
+          // ✅ DEBUG PK (nouveau) : ce qu'on voulait faire vs ce qu'on a fait
+          pkCandidate: typeof pkCandidate === 'number' && Number.isFinite(pkCandidate) ? pkCandidate : null,
+          pkDecision: pkDecision ?? null,
         })
+
 
         // 🔊 diffusion globale de la position GPS projetée (pour FT)
         window.dispatchEvent(
@@ -1166,6 +1233,16 @@ export default function TitleBar() {
               }
             >
               {scheduleDelta}
+              {testModeEnabled &&
+                typeof scheduleDeltaSec === 'number' &&
+                Number.isFinite(scheduleDeltaSec) && (
+                  <>
+                    {' '}
+                    <span className="opacity-80 text-zinc-900 dark:text-zinc-100">
+                      {formatSignedHMS(scheduleDeltaSec)}
+                    </span>
+                  </>
+                )}
             </span>
           )}
 
@@ -1472,113 +1549,138 @@ export default function TitleBar() {
             <button
               type="button"
 onClick={async () => {
-                // ✅ Simulation : on bloque les commandes de l'app (seul le player agit)
-                if (simulationEnabled) {
-                  logTestEvent('ui:blocked', {
-                    control: 'stopButton',
-                    source: 'titlebar',
-                  })
-                  return
-                }
+  // ✅ Simulation : on bloque les commandes de l'app (seul le player agit)
+  if (simulationEnabled) {
+    logTestEvent('ui:blocked', {
+      control: 'stopButton',
+      source: 'titlebar',
+    })
+    return
+  }
 
-                // 1) Décharger le PDF + retour état initial UI
-                // - stop auto-scroll + stop GPS
-                if (autoScroll) {
-                  setAutoScroll(false)
-                  window.dispatchEvent(
-                    new CustomEvent('ft:auto-scroll-change', {
-                      detail: { enabled: false, source: 'titlebar' },
-                    })
-                  )
-                }
-                stopGpsWatch()
+  // 1) Décharger le PDF + retour état initial UI
+  // - stop auto-scroll + stop GPS
+  if (autoScroll) {
+    setAutoScroll(false)
+    window.dispatchEvent(
+      new CustomEvent('ft:auto-scroll-change', {
+        detail: { enabled: false, source: 'titlebar' },
+      })
+    )
+  }
+  stopGpsWatch()
 
-                // - reset affichage avance/retard
-                setScheduleDelta(null)
-                setScheduleDeltaIsLarge(false)
+  // - reset affichage avance/retard
+  setScheduleDelta(null)
+  setScheduleDeltaIsLarge(false)
 
-                // - retour à l'état initial PDF
-                setPdfMode('blue')
+  // - retour à l'état initial PDF
+  setPdfMode('blue')
+  setPdfLoading(false)
 
-                setPdfLoading(false)
-                // 2) Stop session de test (on fige les logs)
-                if (testRecording) {
-                  // On marque l'intention STOP tout de suite
-                  logTestEvent('ui:test:stop', { source: 'stop_button' })
+  // 2) Stop session de test (on fige les logs)
+  if (testRecording) {
+    // On marque l'intention STOP tout de suite
+    logTestEvent('ui:test:stop', { source: 'stop_button' })
 
-                  // --- Upload automatique du log (avant stopTestSession pour que l'URL soit loggée) ---
-                  try {
-                    const mod = await import('../../lib/testLogger')
-                    const built = mod.buildTestLogFile?.()
+    // ✅ On fige la session AVANT toute action externe
+    stopTestSession()
+    setTestRecording(false)
 
-                    if (built?.ok && built.blob && built.filename) {
-                      const form = new FormData()
-                      form.append('token', 'limgpt_upload_v1_9f3a7c2e') // doit matcher upload_log.php
-                      // logId = identifiant de session (stable et déjà utilisé)
-                      form.append('logId', built.sessionId ?? '')
-                      form.append('file', built.blob, built.filename)
+    // 3) ✅ Export local immédiat (toujours) — iPad-friendly (Share Sheet) + fallback download
+    try {
+      const exported = await exportTestLogLocal()
+      if (!exported) {
+        window.alert('Aucun événement de test à exporter.')
+        logTestEvent('testlog:export:failed', {
+          reason: 'no_events',
+          source: 'stop_button',
+        })
+      } else {
+        logTestEvent('testlog:exported', { source: 'stop_button' })
+      }
+    } catch (err: any) {
+      window.alert('Export local des logs impossible.')
+      logTestEvent('testlog:export:failed', {
+        reason: err?.message ?? String(err),
+        source: 'stop_button',
+      })
+    }
 
-                      const res = await fetch(
-                        'https://radioequinoxe.com/limgpt/upload_log.php',
-                        { method: 'POST', body: form }
-                      )
 
-                      const json = await res.json().catch(() => null)
+    // 4) ☁️ Upload réseau en arrière-plan (ne doit JAMAIS bloquer le STOP)
+    ;(async () => {
+      try {
+        const mod = await import('../../lib/testLogger')
+        const built = mod.buildTestLogFile?.()
 
-                      if (json?.ok && json?.remoteUrl) {
-                        logTestEvent('testlog:uploaded', {
-                          remoteUrl: json.remoteUrl,
+        if (!built?.ok || !built.blob || !built.filename) {
+          logTestEvent('testlog:upload:skipped', {
+            reason: 'build_failed',
+            source: 'stop_button',
+          })
+          return
+        }
 
-                          sessionId: built.sessionId ?? null,
-                          filename: built.filename,
-                          source: 'stop_button',
-                        })
-                      } else {
-                        logTestEvent('testlog:upload:failed', {
-                          sessionId: built.sessionId ?? null,
-                          reason: json?.error ?? 'bad_response',
-                          source: 'stop_button',
-                        })
-                      }
-                    }
-                  } catch (err: any) {
-                    logTestEvent('testlog:upload:failed', {
-                      reason: err?.message ?? String(err),
-                      source: 'stop_button',
-                    })
-                  }
+        const form = new FormData()
+        form.append('token', 'limgpt_upload_v1_9f3a7c2e') // doit matcher upload_log.php
+        form.append('logId', built.sessionId ?? '')
+        form.append('file', built.blob, built.filename)
 
-                  // Maintenant seulement : on fige la session
-                  stopTestSession()
-                  setTestRecording(false)
-                }
+        // timeout upload pour éviter les pendings infinis
+        const controller = new AbortController()
+        const UPLOAD_TIMEOUT_MS = 12_000
+        const t = window.setTimeout(() => controller.abort(), UPLOAD_TIMEOUT_MS)
 
-                // 3) Proposition export
+        try {
+          const res = await fetch('https://radioequinoxe.com/limgpt/upload_log.php', {
+            method: 'POST',
+            body: form,
+            signal: controller.signal,
+          })
 
-                const wantExport = window.confirm('Exporter les logs, oui ou non ?')
+          const json = await res.json().catch(() => null)
 
-                if (wantExport) {
-                  const exported = exportTestLog()
-                  if (!exported) {
-                    alert('Aucun événement de test à exporter.')
-                  }
-                }
+          if (json?.ok && json?.remoteUrl) {
+            logTestEvent('testlog:uploaded', {
+              remoteUrl: json.remoteUrl,
+              sessionId: built.sessionId ?? null,
+              filename: built.filename,
+              source: 'stop_button',
+            })
+          } else {
+            logTestEvent('testlog:upload:failed', {
+              sessionId: built.sessionId ?? null,
+              reason: json?.error ?? 'bad_response',
+              source: 'stop_button',
+            })
+          }
+        } finally {
+          window.clearTimeout(t)
+        }
+      } catch (err: any) {
+        logTestEvent('testlog:upload:failed', {
+          reason: err?.name === 'AbortError' ? 'timeout' : (err?.message ?? String(err)),
+          source: 'stop_button',
+        })
+      }
+    })()
+  }
 
-                // 4) ✅ Redémarrer immédiatement une nouvelle session de log
-                //    (label forcé en mode_blue, car setPdfMode est asynchrone)
-                const nextMode: 'blue' = 'blue'
+  // 5) ✅ Redémarrer immédiatement une nouvelle session de log
+  //    (label forcé en mode_blue, car setPdfMode est asynchrone)
+  const nextMode: 'blue' = 'blue'
 
-                const labelParts: string[] = []
-                if (trainDisplay) labelParts.push(`train_${trainDisplay}`)
-                labelParts.push(`mode_${nextMode}`)
-                labelParts.push('auto')
+  const labelParts: string[] = []
+  if (trainDisplay) labelParts.push(`train_${trainDisplay}`)
+  labelParts.push(`mode_${nextMode}`)
+  labelParts.push('auto')
 
-                const label = labelParts.join('_')
-                startTestSession(label)
-                setTestRecording(true)
+  const label = labelParts.join('_')
+  startTestSession(label)
+  setTestRecording(true)
+}}
 
-                // (Si Non : rien à faire, on est déjà revenu à l'état initial)
-              }}
               disabled={!testRecording}
               className={
 
@@ -1650,7 +1752,7 @@ onClick={async () => {
                 <input
                   type="checkbox"
                   checked={testModeEnabled}
-                  onChange={() => {
+                  onChange={async () => {
                     // ✅ Simulation : on bloque les commandes de l'app (seul le player agit)
                     if (simulationEnabled) {
                       logTestEvent('ui:blocked', {
@@ -1698,13 +1800,24 @@ onClick={async () => {
                         setTestRecording(false)
                       }
 
-                      // 3) Proposition export
-                      const wantExport = window.confirm('Exporter les logs, oui ou non ?')
-                      if (wantExport) {
-                        const exported = exportTestLog()
+                      // 3) ✅ Export local immédiat (toujours) — iPad-friendly (Share Sheet) + fallback download
+                      try {
+                        const exported = await exportTestLogLocal()
                         if (!exported) {
-                          alert('Aucun événement de test à exporter.')
+                          window.alert('Aucun événement de test à exporter.')
+                          logTestEvent('testlog:export:failed', {
+                            reason: 'no_events',
+                            source: 'settings_toggle',
+                          })
+                        } else {
+                          logTestEvent('testlog:exported', { source: 'settings_toggle' })
                         }
+                      } catch (err: any) {
+                        window.alert('Export local des logs impossible.')
+                        logTestEvent('testlog:export:failed', {
+                          reason: err?.message ?? String(err),
+                          source: 'settings_toggle',
+                        })
                       }
 
                       // 4) Désactivation du mode test (=> le bouton STOP disparaît)
@@ -1736,10 +1849,10 @@ onClick={async () => {
                     })
                     setTestRecording(true)
                   }}
-
                   className="h-4 w-4 cursor-pointer accent-blue-600"
                 />
               </label>
+
 
               <div className="h-px bg-zinc-200/80 dark:bg-zinc-700/80 my-2" />
 

@@ -493,7 +493,12 @@ export default function FT({ variant = "classic" }: FTProps) {
   }, []);
 
   const autoScrollBaseRef =
-    React.useRef<{ realMin: number; firstHoraMin: number; fixedDelay: number } | null>(null);
+    React.useRef<{
+      realMin: number
+      firstHoraMin: number
+      fixedDelay: number       // minutes (arrondi, pour l'affichage actuel)
+      deltaSec: number         // secondes (signé, exact au moment du Play)
+    } | null>(null);
 
   // Ligne cible pour un recalage manuel (mode Standby)
   const recalibrateFromRowRef = React.useRef<number | null>(null);
@@ -636,14 +641,17 @@ export default function FT({ variant = "classic" }: FTProps) {
 
             const txt = ((dep?.textContent ?? theo?.textContent) ?? "").trim();
 
-            const m = /^(\d{1,2}):(\d{2})$/.exec(txt);
+            // ✅ Accepte HH:MM et HH:MM:SS (mode test)
+            const m = /^(\d{1,2}):(\d{2})(?::(\d{2}))?$/.exec(txt);
             if (!m) return null;
 
             const hh = Number(m[1]);
             const mm = Number(m[2]);
-            if (!Number.isFinite(hh) || !Number.isFinite(mm)) return null;
+            const ss = m[3] != null ? Number(m[3]) : 0;
 
-            return hh * 60 + mm;
+            if (!Number.isFinite(hh) || !Number.isFinite(mm) || !Number.isFinite(ss)) return null;
+
+            return hh * 60 + mm + ss / 60;
           };
 
 
@@ -740,7 +748,7 @@ export default function FT({ variant = "classic" }: FTProps) {
   const lastPkRef = React.useRef<number | null>(null);
   const lastPkChangeAtRef = React.useRef<number>(0);
 
-    // ===== Watchdog GPS : re-évalue l'état même s'il n'y a plus d'events gps:position =====
+  // ===== Watchdog GPS : re-évalue l'état même s'il n'y a plus d'events gps:position =====
   useEffect(() => {
     const WATCHDOG_INTERVAL_MS = 1000;
 
@@ -761,7 +769,8 @@ export default function FT({ variant = "classic" }: FTProps) {
       if (!sampleTs) return;
 
       const hasGpsFix =
-        typeof (last as any).lat === "number" && typeof (last as any).lon === "number";
+        typeof (last as any).lat === "number" &&
+        typeof (last as any).lon === "number";
 
       const onLine = !!(last as any).onLine;
 
@@ -795,6 +804,9 @@ export default function FT({ variant = "classic" }: FTProps) {
       else if (pkFrozenOrange) reasonCodes.push("pk_frozen_orange");
       reasonCodes.push("watchdog");
 
+      // -------------------------
+      // 1) Calcul état de base
+      // -------------------------
       let nextState: GpsState = "RED";
       if (!hasGpsFix) {
         nextState = "RED";
@@ -808,10 +820,61 @@ export default function FT({ variant = "classic" }: FTProps) {
         nextState = "GREEN";
       }
 
-      const emitGpsState = (forced: boolean) => {
-        const now = nowTs;
+      // -------------------------
+      // 2) ORANGE -> RED global (chrono)
+      // -------------------------
+      if (nextState === "ORANGE") {
+        if (orangeToRedStartedAtRef.current == null) {
+          orangeToRedStartedAtRef.current = nowTs;
+          logTestEvent("gps:orange-to-red:start", {
+            startedAt: nowTs,
+            timeoutMs: ORANGE_TIMEOUT_MS,
+            reasonCodes,
+            source: "watchdog",
+          });
+        } else {
+          const startedAt = orangeToRedStartedAtRef.current;
+          const elapsedMs = Math.max(0, nowTs - startedAt);
 
-        // On n'affiche un PK que si GREEN
+          if (elapsedMs >= ORANGE_TIMEOUT_MS) {
+            nextState = "RED";
+            reasonCodes.push("orange_timeout");
+
+            logTestEvent("gps:orange-to-red:fire", {
+              startedAt,
+              nowTs,
+              elapsedMs,
+              timeoutMs: ORANGE_TIMEOUT_MS,
+              reasonCodes,
+              source: "watchdog",
+            });
+
+            // reset chrono pour éviter de refire en boucle
+            orangeToRedStartedAtRef.current = null;
+          }
+        }
+      } else {
+        if (orangeToRedStartedAtRef.current != null) {
+          const startedAt = orangeToRedStartedAtRef.current;
+          const elapsedMs = Math.max(0, nowTs - startedAt);
+
+          logTestEvent("gps:orange-to-red:stop", {
+            startedAt,
+            nowTs,
+            elapsedMs,
+            timeoutMs: ORANGE_TIMEOUT_MS,
+            newState: nextState,
+            source: "watchdog",
+          });
+
+          orangeToRedStartedAtRef.current = null;
+        }
+      }
+
+      // -------------------------
+      // 3) Emission vers TitleBar (throttle)
+      // -------------------------
+      const emitGpsState = (forced: boolean) => {
         const pkForUi = nextState === "GREEN" ? pkFinite : null;
 
         const lastEmitAt = lastGpsStateEmitAtRef.current;
@@ -819,13 +882,13 @@ export default function FT({ variant = "classic" }: FTProps) {
 
         const pkChanged =
           pkForUi != null &&
-          (lastEmitPk == null || Math.abs(pkForUi - lastEmitPk) >= 0.05); // ~50m
+          (lastEmitPk == null || Math.abs(pkForUi - lastEmitPk) >= 0.05);
 
-        const timeOk = now - lastEmitAt >= GPS_STATE_EMIT_MIN_INTERVAL_MS;
+        const timeOk = nowTs - lastEmitAt >= GPS_STATE_EMIT_MIN_INTERVAL_MS;
 
         if (!forced && !pkChanged && !timeOk) return;
 
-        lastGpsStateEmitAtRef.current = now;
+        lastGpsStateEmitAtRef.current = nowTs;
         lastGpsStateEmitPkRef.current = pkForUi;
 
         window.dispatchEvent(
@@ -846,7 +909,6 @@ export default function FT({ variant = "classic" }: FTProps) {
 
       const prevState = gpsStateRef.current;
 
-      // 1) Machine d'état : si changement -> log + émission forcée
       if (prevState !== nextState) {
         gpsStateRef.current = nextState;
 
@@ -862,8 +924,6 @@ export default function FT({ variant = "classic" }: FTProps) {
           onLine,
           hasFix: hasGpsFix,
           isStale,
-
-          // paramètres utiles
           gpsFreshSec: GPS_FRESH_SEC,
           gpsFreezeWindowMs: GPS_FREEZE_WINDOW_MS,
           gpsFreezeToRedMs: GPS_FREEZE_TO_RED_MS,
@@ -871,13 +931,14 @@ export default function FT({ variant = "classic" }: FTProps) {
           orangeTimeoutMs: ORANGE_TIMEOUT_MS,
         });
       } else {
-        // 2) Même état : si GREEN, on peut quand même rafraîchir le PK affiché
         if (nextState === "GREEN") {
           emitGpsState(false);
         }
       }
 
-      // 3) Application de la règle de bascule HORAIRE/GPS même sans events GPS
+      // -------------------------
+      // 4) Règle HORAIRE/GPS même sans events GPS
+      // -------------------------
       const isRed = gpsStateRef.current === "RED";
       const currentMode = referenceModeRef.current;
 
@@ -930,6 +991,7 @@ export default function FT({ variant = "classic" }: FTProps) {
   }, []);
 
 
+
   // Réglages (ajustables)
   const GPS_FRESH_SEC = 8; // si l'échantillon est plus vieux -> pas "green"
   const GPS_FREEZE_WINDOW_MS = 10_000; // PK inchangé trop longtemps -> ORANGE
@@ -966,6 +1028,11 @@ export default function FT({ variant = "classic" }: FTProps) {
 
   // Timestamp de démarrage de l’hystérésis ORANGE (pour calcul remaining/elapsed)
   const orangeTimeoutStartedAtRef = React.useRef<number | null>(null);
+
+  // ✅ ORANGE -> RED (général) : si on reste ORANGE trop longtemps (quelque soit la cause)
+const orangeToRedTimerRef = React.useRef<number | null>(null);
+const orangeToRedStartedAtRef = React.useRef<number | null>(null);
+
 
   // Suivi du scroll manuel pendant que le mode horaire est actif
   const isManualScrollRef = React.useRef(false);
@@ -1099,16 +1166,22 @@ export default function FT({ variant = "classic" }: FTProps) {
     };
 
     // ➜ nouvel helper : delta arrondi à la minute la plus proche
-    const computeFixedDelayMinutes = (now: Date, ftMinutes: number) => {
-      const nowTotalSec =
-        now.getHours() * 3600 +
-        now.getMinutes() * 60 +
-        now.getSeconds();
-      const ftTotalSec = ftMinutes * 60;
-      const deltaSec = nowTotalSec - ftTotalSec;
-      // arrondi à la minute entière la plus proche
-      return Math.round(deltaSec / 60);
-    };
+const computeFixedDelay = (now: Date, ftMinutes: number) => {
+  const nowTotalSec =
+    now.getHours() * 3600 +
+    now.getMinutes() * 60 +
+    now.getSeconds()
+
+  const ftTotalSec = ftMinutes * 60
+
+  const deltaSec = nowTotalSec - ftTotalSec
+
+  // arrondi à la minute entière la plus proche (affichage actuel)
+  const fixedDelayMin = Math.round(deltaSec / 60)
+
+  return { fixedDelayMin, deltaSec }
+}
+
 
     // Base "classique" : à partir de la première heure FT dispo
     const captureBaseFromFirstRow = () => {
@@ -1127,22 +1200,23 @@ export default function FT({ variant = "classic" }: FTProps) {
 
       if (firstHoraMin == null) return null;
 
-      const fixedDelay = computeFixedDelayMinutes(now, firstHoraMin);
-      return { realMin: nowMin, firstHoraMin, fixedDelay };
-    };
+    const { fixedDelayMin: fixedDelay, deltaSec } = computeFixedDelay(now, firstHoraMin)
+    return { realMin: nowMin, firstHoraMin, fixedDelay, deltaSec };
+  };
 
 
-    // Base "mode Standby" : à partir de la ligne sélectionnée
-    const captureBaseFromRowIndex = (rowIndex: number) => {
-      const now = new Date();
-      const nowMin = now.getHours() * 60 + now.getMinutes();
+  // Base "mode Standby" : à partir de la ligne sélectionnée
+  const captureBaseFromRowIndex = (rowIndex: number) => {
+    const now = new Date();
+    const nowMin = now.getHours() * 60 + now.getMinutes();
 
-      const rowMin = horaTheoMinutesByIndex[rowIndex];
-      if (typeof rowMin !== "number" || !Number.isFinite(rowMin)) return null;
+    const rowMin = horaTheoMinutesByIndex[rowIndex];
+    if (typeof rowMin !== "number" || !Number.isFinite(rowMin)) return null;
 
-      const fixedDelay = computeFixedDelayMinutes(now, rowMin);
-      return { realMin: nowMin, firstHoraMin: rowMin, fixedDelay };
-    };
+    const { fixedDelayMin: fixedDelay, deltaSec } = computeFixedDelay(now, rowMin);
+    return { realMin: nowMin, firstHoraMin: rowMin, fixedDelay, deltaSec };
+  };
+
 
 
     // ✅ Choix de la base : soit ligne sélectionnée (Standby), soit première ligne
@@ -1161,17 +1235,21 @@ export default function FT({ variant = "classic" }: FTProps) {
 
     if (autoScrollBaseRef.current) {
       const fixed = autoScrollBaseRef.current.fixedDelay;
+      const deltaSec = autoScrollBaseRef.current.deltaSec;
       const text =
         fixed === 0 ? "0 min" : fixed > 0 ? `+ ${fixed} min` : `- ${-fixed} min`;
+
       window.dispatchEvent(
         new CustomEvent("lim:schedule-delta", {
           detail: {
             text,
             isLargeDelay: Math.abs(fixed) >= 5,
+            deltaSec, // delta signé en secondes (depuis la base)
           },
         })
       );
     }
+
 
     const updateFromClock = (forcedHHMM?: string) => {
       // si heure forcée (console), on garde l'ancien comportement
@@ -1358,11 +1436,29 @@ export default function FT({ variant = "classic" }: FTProps) {
         }
       }
 
-      const dataIndex =
+      let dataIndex =
         exactDataIndex ?? lastPastDataIndex ?? firstValidDataIndex ?? 0;
+
+      // ✅ Tick 0 : on évite le "saut" au démarrage (on reste sur la 1ère ligne)
+      if (
+        referenceModeRef.current === "HORAIRE" &&
+        elapsed === 0 &&
+        firstValidDataIndex != null
+      ) {
+        dataIndex = firstValidDataIndex;
+      }
 
       // 👉 Le moteur horaire ne pilote la ligne active que si on est en mode HORAIRE
       if (referenceModeRef.current === "HORAIRE") {
+
+        // ✅ Tick 0 : on évite le "saut" visuel dû au recalage scroll auto
+        // (on bloque le scroll programmatique très brièvement)
+        if (elapsed === 0) {
+          isManualScrollRef.current = true;
+          window.setTimeout(() => {
+            isManualScrollRef.current = false;
+          }, 600);
+        }
 
         setActiveRowIndex(dataIndex);
       }
@@ -3098,6 +3194,286 @@ logTestEvent("gps:mode-check", {
     return out;
   }, [rawEntries, heuresDetectees, codesCParHeure]);
 
+  // ===== Horaires théoriques en SECONDES (pondérés par Vmax) — mode test =====
+  // Objectif : progression plus réaliste quand Vmax varie + suppression des doublons HH:MM
+  // ===== Horaires théoriques en SECONDES (pondérés par Vmax) — mode test =====
+  // Objectif : progression plus réaliste quand Vmax varie + suppression des doublons HH:MM
+  const horaTheoSecondsByIndex = useMemo(() => {
+    if (!testModeEnabled) {
+      return new Array<number | null>(rawEntries.length).fill(null);
+    }
+
+    const clamp = (x: number, lo: number, hi: number) => Math.min(Math.max(x, lo), hi);
+
+    const getPkNum = (idx: number): number | null => {
+      const pkStr = rawEntries[idx]?.pk;
+      const pkNum =
+        typeof pkStr === "string" || typeof pkStr === "number" ? Number(pkStr) : NaN;
+      return Number.isFinite(pkNum) ? pkNum : null;
+    };
+
+    const getVmaxForIndex = (idx: number): number | null => {
+      const e = rawEntries[idx] as any;
+      const v = typeof e?.vmax === "number" ? e.vmax : null;
+      return v != null && Number.isFinite(v) && v > 0 ? v : null;
+    };
+
+    // --------
+    // 1) Recalcul des ancres uniquement (départs + arrivées possibles)
+    //    (copie contrôlée de la logique de horaTheoMinutesByIndex)
+    // --------
+    const departMinutesByIndex: Array<number | null> = new Array(rawEntries.length).fill(null);
+    const departHoraTextByIndex: Array<string | null> = new Array(rawEntries.length).fill(null);
+
+    let cursor = 0;
+    for (let i = 0; i < rawEntries.length; i++) {
+      const e = rawEntries[i] as any;
+      if (e?.isNoteOnly) continue;
+
+      const eligible = isEligible(rawEntries[i]);
+
+      const horaStr =
+        eligible && cursor < heuresDetectees.length
+          ? heuresDetectees[cursor]
+          : (e?.hora ?? "");
+
+      if (eligible && cursor < heuresDetectees.length) cursor++;
+
+      const horaText = typeof horaStr === "string" ? horaStr.trim() : "";
+      departHoraTextByIndex[i] = horaText.length > 0 ? horaText : null;
+
+      // parseHoraToMinutes existe déjà dans ton fichier
+      departMinutesByIndex[i] = parseHoraToMinutes(horaText);
+    }
+
+    const arrivalMinutesByIndex: Array<number | null> = new Array(rawEntries.length).fill(null);
+
+    for (let i = 0; i < rawEntries.length; i++) {
+      const e = rawEntries[i] as any;
+      if (e?.isNoteOnly) continue;
+
+      const depMin = departMinutesByIndex[i];
+      const horaText = departHoraTextByIndex[i];
+      if (depMin == null || !horaText) continue;
+
+      const depNorm = (rawEntries[i].dependencia ?? "")
+        .toUpperCase()
+        .replace(/\s+/g, " ")
+        .trim();
+
+      const isVoyageursStop =
+        depNorm === "BARCELONA SANTS" ||
+        depNorm === "LA SAGRERA AV" ||
+        depNorm === "GIRONA" ||
+        depNorm === "FIGUERES-VILAFANT";
+
+      const isOriginOrTerminus = i === firstNonNoteIndex || i === lastNonNoteIndex;
+      if (!isVoyageursStop || isOriginOrTerminus) continue;
+
+      const codesPourHeure = codesCParHeure[horaText] ?? [];
+      const firstCode = codesPourHeure[0];
+      const n = Number(firstCode);
+
+      if (Number.isFinite(n) && n > 0) {
+        arrivalMinutesByIndex[i] = depMin - n;
+      }
+    }
+
+    // --------
+    // 2) Construire les ancres en secondes (UNIQUEMENT sur les vrais points)
+    //    - l’ancre i porte depMin (départ) en secondes
+    //    - et pour la borne de segment B, on utilisera arrival(B) si dispo sinon depart(B)
+    // --------
+    const anchorSecByIndex: Array<number | null> = new Array(rawEntries.length).fill(null);
+    for (let i = 0; i < rawEntries.length; i++) {
+      const e = rawEntries[i] as any;
+      if (e?.isNoteOnly) continue;
+
+      const depMin = departMinutesByIndex[i];
+      const pk = getPkNum(i);
+      if (depMin == null || pk == null) continue;
+
+      anchorSecByIndex[i] = Math.round(depMin * 60);
+    }
+
+    // --------
+    // 3) Remplissage pondéré Vmax entre ancres successives
+    // --------
+    const out: Array<number | null> = new Array(rawEntries.length).fill(null);
+
+    let lastAnchorIndex: number | null = null;
+
+    for (let i = 0; i < rawEntries.length; i++) {
+      const e = rawEntries[i] as any;
+      if (e?.isNoteOnly) continue;
+
+      const depB = departMinutesByIndex[i];
+      const pkB = getPkNum(i);
+      if (depB == null || pkB == null) continue;
+
+      if (lastAnchorIndex == null) {
+        // première ancre rencontrée
+        out[i] = Math.round(depB * 60);
+        lastAnchorIndex = i;
+        continue;
+      }
+
+      const a = lastAnchorIndex;
+
+      const depA = departMinutesByIndex[a];
+      const pkA = getPkNum(a);
+      if (depA == null || pkA == null) {
+        lastAnchorIndex = i;
+        continue;
+      }
+
+      // borne B = arrivée(B) si dispo, sinon départ(B)
+      const endB = arrivalMinutesByIndex[i] ?? depB;
+
+      const secA = Math.round(depA * 60);
+      const secB = Math.round(endB * 60);
+
+            // 🔎 DEBUG (uniquement 1er segment) : comprendre les "téléportations" au début
+      if (a === lastAnchorIndex && a === 0) {
+        try {
+          const pkA_dbg = getPkNum(a);
+          const pkB_dbg = getPkNum(i);
+
+          const arrB_dbg = arrivalMinutesByIndex[i];
+
+          const fmtMin = (m: number | null) => {
+            if (m == null) return null;
+            const hh = Math.floor((((m % (24 * 60)) + (24 * 60)) % (24 * 60)) / 60);
+            const mm = (((m % (24 * 60)) + (24 * 60)) % (24 * 60)) % 60;
+            const pad = (n: number) => n.toString().padStart(2, "0");
+            return `${pad(hh)}:${pad(mm)}`;
+          };
+
+          console.log(
+            "[FT][horaTheoSeconds][SEG0_JSON]",
+            JSON.stringify(
+              {
+                A: { idx: a, pk: pkA_dbg, depA_raw: depA, secA },
+                B: { idx: i, pk: pkB_dbg, depB_raw: depB, endB_raw: endB, secB },
+                arrivalB_raw: arrB_dbg,
+                deltaSec: secB - secA,
+              },
+              null,
+              0
+            )
+          );
+
+        } catch (err) {
+          console.warn("[FT][horaTheoSeconds][SEG0] debug failed", err);
+        }
+      }
+
+
+      out[a] = secA;
+      out[i] = Math.round(depB * 60); // on garde l’affichage “départ B” sur la ligne B (cohérent avec ta colonne)
+
+      const totalSec = secB - secA;
+      const totalAbs = Math.abs(totalSec);
+      if (totalAbs === 0) {
+        lastAnchorIndex = i;
+        continue;
+      }
+
+      // segments entre a -> i (uniquement sur les points PK valides)
+      type Seg = { idxTo: number; w: number };
+      const segs: Seg[] = [];
+
+      // 1) Liste des indices ayant un PK exploitable entre a..i
+      const idxPts: number[] = [];
+      for (let k = a; k <= i; k++) {
+        const ee = rawEntries[k] as any;
+        if (ee?.isNoteOnly) continue;
+        const pkK = getPkNum(k);
+        if (pkK == null) continue;
+        idxPts.push(k);
+      }
+
+      // 2) Construire les segments entre points successifs valides
+      for (let j = 0; j < idxPts.length - 1; j++) {
+        const k0 = idxPts[j];
+        const k1 = idxPts[j + 1];
+
+        const pk0 = getPkNum(k0);
+        const pk1 = getPkNum(k1);
+        if (pk0 == null || pk1 == null) continue;
+
+        const dKm = Math.abs(pk1 - pk0);
+        if (!Number.isFinite(dKm) || dKm <= 0) continue;
+
+        // Vmax applicable : priorité au "début" du segment
+        const v = getVmaxForIndex(k0) ?? getVmaxForIndex(k1) ?? 120;
+        const w = dKm / v;
+
+        segs.push({ idxTo: k1, w });
+      }
+
+      const W = segs.reduce((s, it) => s + it.w, 0);
+
+      // fallback linéaire PK si W invalide
+      if (!Number.isFinite(W) || W <= 0) {
+        const denom = pkB - pkA;
+        if (denom === 0) {
+          lastAnchorIndex = i;
+          continue;
+        }
+
+        for (let k = a + 1; k < i; k++) {
+          const ee = rawEntries[k] as any;
+          if (ee?.isNoteOnly) continue;
+          if (out[k] != null) continue;
+
+          const pkK = getPkNum(k);
+          if (pkK == null) continue;
+
+          let t = (pkK - pkA) / denom;
+          t = clamp(t, 0, 1);
+
+          const sk = secA + t * (secB - secA);
+          const lo = Math.min(secA, secB);
+          const hi = Math.max(secA, secB);
+          out[k] = Math.round(clamp(sk, lo, hi));
+        }
+
+        lastAnchorIndex = i;
+        continue;
+      }
+
+      // cumul pondéré
+      let cum = 0;
+      const cumByIndex = new Map<number, number>();
+      for (const seg of segs) {
+        cum += seg.w;
+        cumByIndex.set(seg.idxTo, cum);
+      }
+
+      // remplissage
+      for (let k = a + 1; k < i; k++) {
+        const ee = rawEntries[k] as any;
+        if (ee?.isNoteOnly) continue;
+        if (out[k] != null) continue;
+
+        const cumK = cumByIndex.get(k);
+        if (cumK == null) continue;
+
+        const t = clamp(cumK / W, 0, 1);
+        const sk = secA + t * (secB - secA);
+        const lo = Math.min(secA, secB);
+        const hi = Math.max(secA, secB);
+        out[k] = Math.round(clamp(sk, lo, hi));
+      }
+
+      lastAnchorIndex = i;
+    }
+
+    // Si certaines cases restent null (avant la première ancre), on laisse null.
+    return out;
+  }, [testModeEnabled, rawEntries, heuresDetectees, codesCParHeure, firstNonNoteIndex, lastNonNoteIndex]);
+
 
   // Gestion RC
   let rcCurrentSegmentId = 0;
@@ -3759,7 +4135,7 @@ onClick={() => {
           {com}
         </td>
 
-        {/* Hora */}
+   {/* Hora */}
         <td
           className={
             "ft-td ft-hora-main" +
@@ -3768,15 +4144,28 @@ onClick={() => {
         >
           {hora ? (
             <span className="ft-hora-depart">{hora}</span>
-          ) : typeof horaTheoMinutesByIndex[i] === "number" ? (
+          ) : testModeEnabled && typeof horaTheoSecondsByIndex[i] === "number" ? (
             <span className="ft-hora-theo">
-              {formatMinutesToHora(horaTheoMinutesByIndex[i] as number)}
+              {(() => {
+                const sec = horaTheoSecondsByIndex[i] as number
+                const minutesInDay = 24 * 60 * 60
+                let t = sec % minutesInDay
+                if (t < 0) t += minutesInDay
+                const hh = Math.floor(t / 3600)
+                const mm = Math.floor((t % 3600) / 60)
+                const ss = Math.floor(t % 60)
+                const pad = (n: number) => n.toString().padStart(2, "0")
+                return `${pad(hh)}:${pad(mm)}:${pad(ss)}`
+              })()}
             </span>
           ) : null}
+
         </td>
+
 
         <td className="ft-td">{tecnico}</td>
         <td className="ft-td">{conc}</td>
+
         <td className="ft-td">
           {(() => {
             // 1) cas normal : la toute première vraie ligne est visible

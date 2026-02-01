@@ -1,13 +1,41 @@
 export type GpsPkProjection = {
+  // PK final (après garde-fous)
   pk: number | null
+
+  // Abscisse ruban
   s_km: number | null
   distance_m: number | null
 
-  // DEBUG (sans impact fonctionnel) : point du ruban retenu
+  // ===== DEBUG PK (hyper utile pour diagnostiquer les garde-fous) =====
+  // PK brut issu de pkFromS(s_km) AVANT garde-fous
+  pkCandidate?: number | null
+
+  // Décision prise par les garde-fous
+  pkDecision?: {
+    reason:
+      | "accepted"
+      | "first_fix"
+      | "no_candidate"
+      | "rejected_jump"
+      | "rejected_direction"
+    // Mémoire avant décision (ce qu'on avait en dernier PK accepté)
+    lastAcceptedPk?: number | null
+    lastAcceptedAtMs?: number | null
+    lastDirection?: 1 | -1 | null
+
+    // Mesures courantes (si calculables)
+    dtMs?: number | null
+    allowedJumpKm?: number | null
+    jumpKm?: number | null
+    dir?: 1 | -1 | null
+  }
+
+  // DEBUG : point du ruban retenu
   nearestIdx?: number
   nearestLat?: number
   nearestLon?: number
 }
+
 
 import { RIBBON_POINTS } from './ligne050_ribbon_dense'
 import { ANCRES_PK_S } from './ancres_pk_s'
@@ -159,59 +187,93 @@ export function projectGpsToPk(lat: number, lon: number): GpsPkProjection | null
   const distance_m = bestDist
   const pkCandidate = pkFromS(s_km)
 
+  // ===== DEBUG : snapshot de la mémoire AVANT décision =====
+  const memLastPk = lastAcceptedPk?.pk ?? null
+  const memLastAt = lastAcceptedPk?.atMs ?? null
+  const memLastDir = lastDirection ?? null
+
   // ----- GARDE-FOU #1 : anti-saut PK -----
   const nowMs = Date.now()
   let pk = pkCandidate
 
-  if (
-    pkCandidate != null &&
-    Number.isFinite(pkCandidate) &&
-    lastAcceptedPk &&
-    Number.isFinite(lastAcceptedPk.pk)
-  ) {
-    const dtMs = Math.max(1, nowMs - lastAcceptedPk.atMs)
+  // On va remplir un objet décision très complet
+  let decisionReason:
+    | "accepted"
+    | "first_fix"
+    | "no_candidate"
+    | "rejected_jump"
+    | "rejected_direction" = "no_candidate"
+
+  let dtMs: number | null = null
+  let allowedJumpKm: number | null = null
+  let jumpKm: number | null = null
+  let dir: 1 | -1 | null = null
+
+  if (pkCandidate == null || !Number.isFinite(pkCandidate)) {
+    // Hors domaine ancres / pas exploitable
+    pk = null
+    decisionReason = "no_candidate"
+  } else if (lastAcceptedPk && Number.isFinite(lastAcceptedPk.pk)) {
+    dtMs = Math.max(1, nowMs - lastAcceptedPk.atMs)
     const dtH = dtMs / 3600000
-    const allowedJumpKm = MAX_PLAUSIBLE_SPEED_KMH * dtH + PK_JUMP_MARGIN_KM
+    allowedJumpKm = MAX_PLAUSIBLE_SPEED_KMH * dtH + PK_JUMP_MARGIN_KM
+
     const deltaPk = pkCandidate - lastAcceptedPk.pk
-    const jumpKm = Math.abs(deltaPk)
+    jumpKm = Math.abs(deltaPk)
+
+    // direction du mouvement proposé
+    dir = deltaPk >= 0 ? 1 : -1
 
     if (jumpKm > allowedJumpKm) {
       // GARDE-FOU #1 : saut trop grand → rejet
       pk = lastAcceptedPk.pk
+      decisionReason = "rejected_jump"
     } else {
       // GARDE-FOU #2 : continuité directionnelle (inversion franche)
-      const dir: 1 | -1 = deltaPk >= 0 ? 1 : -1
-
       if (
         lastDirection != null &&
         dir !== lastDirection &&
         jumpKm >= DIRECTION_CHANGE_THRESHOLD_KM
       ) {
-        // inversion significative → rejet
         pk = lastAcceptedPk.pk
+        decisionReason = "rejected_direction"
       } else {
         // accepté
         pk = pkCandidate
         lastAcceptedPk = { pk: pkCandidate, atMs: nowMs }
         lastDirection = dir
+        decisionReason = "accepted"
       }
     }
-  } else if (pkCandidate != null && Number.isFinite(pkCandidate)) {
+  } else {
     // Premier PK valide : on initialise la mémoire
     lastAcceptedPk = { pk: pkCandidate, atMs: nowMs }
     lastDirection = null
+    pk = pkCandidate
+    decisionReason = "first_fix"
   }
-
 
   return {
     pk,
     s_km,
     distance_m,
 
-    // DEBUG (sans impact) : point du ruban choisi
+    // DEBUG PK (hyper utile)
+    pkCandidate,
+    pkDecision: {
+      reason: decisionReason,
+      lastAcceptedPk: memLastPk,
+      lastAcceptedAtMs: memLastAt,
+      lastDirection: memLastDir,
+      dtMs,
+      allowedJumpKm,
+      jumpKm,
+      dir,
+    },
+
+    // DEBUG ruban
     nearestIdx: bestIdx,
     nearestLat: nearest.lat,
     nearestLon: nearest.lon,
   }
-
 }

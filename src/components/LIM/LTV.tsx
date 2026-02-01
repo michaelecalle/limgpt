@@ -1047,13 +1047,12 @@ const LTV: React.FC = () => {
                       onMouseDown={(e) =>
                         handleEdgeStart("top", e.clientX, e.clientY)
                       }
-                      onTouchStart={(e) =>
-                        handleEdgeStart(
-                          "top",
-                          e.touches[0].clientX,
-                          e.touches[0].clientY
-                        )
-                      }
+                      onTouchStart={(e) => {
+                        e.preventDefault()
+                        const t = e.touches[0]
+                        if (!t) return
+                        handleEdgeStart("top", t.clientX, t.clientY)
+                      }}
                     />
                     <div
                       className="crop-edge bottom"
@@ -1061,13 +1060,12 @@ const LTV: React.FC = () => {
                       onMouseDown={(e) =>
                         handleEdgeStart("bottom", e.clientX, e.clientY)
                       }
-                      onTouchStart={(e) =>
-                        handleEdgeStart(
-                          "bottom",
-                          e.touches[0].clientX,
-                          e.touches[0].clientY
-                        )
-                      }
+                      onTouchStart={(e) => {
+                        e.preventDefault()
+                        const t = e.touches[0]
+                        if (!t) return
+                        handleEdgeStart("bottom", t.clientX, t.clientY)
+                      }}
                     />
                     <div
                       className="crop-edge left"
@@ -1075,13 +1073,12 @@ const LTV: React.FC = () => {
                       onMouseDown={(e) =>
                         handleEdgeStart("left", e.clientX, e.clientY)
                       }
-                      onTouchStart={(e) =>
-                        handleEdgeStart(
-                          "left",
-                          e.touches[0].clientX,
-                          e.touches[0].clientY
-                        )
-                      }
+                      onTouchStart={(e) => {
+                        e.preventDefault()
+                        const t = e.touches[0]
+                        if (!t) return
+                        handleEdgeStart("left", t.clientX, t.clientY)
+                      }}
                     />
                     <div
                       className="crop-edge right"
@@ -1089,14 +1086,14 @@ const LTV: React.FC = () => {
                       onMouseDown={(e) =>
                         handleEdgeStart("right", e.clientX, e.clientY)
                       }
-                      onTouchStart={(e) =>
-                        handleEdgeStart(
-                          "right",
-                          e.touches[0].clientX,
-                          e.touches[0].clientY
-                        )
-                      }
+                      onTouchStart={(e) => {
+                        e.preventDefault()
+                        const t = e.touches[0]
+                        if (!t) return
+                        handleEdgeStart("right", t.clientX, t.clientY)
+                      }}
                     />
+
                   </div>
 
                   {/* Boutons action */}
