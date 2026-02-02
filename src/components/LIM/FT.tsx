@@ -4646,11 +4646,16 @@ onClick={() => {
         .ft-hora-depart {
           font-weight: 600;
         }
-        /* Heures calculées (interpolées) : affichage gris + italique */
+               /* Heures calculées (interpolées) : affichage gris + italique */
         .ft-hora-theo {
           font-style: italic;
           color: #6b7280;
           opacity: 0.85;
+
+          /* ✅ iPad : hh:mm:ss -> réduction nette + prioritaire */
+          font-size: 0.72em !important;
+          line-height: 1.0 !important;
+          white-space: nowrap;
         }
         .dark .ft-hora-theo {
           color: #9ca3af;
