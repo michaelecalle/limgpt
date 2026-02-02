@@ -19,11 +19,15 @@ export type GpsPkProjection = {
       | "fallback_lastAccepted"
       | "rejected_jump"
       | "rejected_direction"
-    // Mémoire avant décision (ce qu'on avait en dernier PK accepté)
 
+    // Mémoire avant décision (ce qu'on avait en dernier PK accepté)
     lastAcceptedPk?: number | null
     lastAcceptedAtMs?: number | null
-    lastDirection?: 1 | -1 | null
+
+    // Direction attendue (train / override manuel)
+    expectedDirection?: 1 | -1 | null
+    expectedDirectionSource?: string | null
+    expectedDirectionTrain?: string | null
 
     // Mesures courantes (si calculables)
     dtMs?: number | null
@@ -38,9 +42,8 @@ export type GpsPkProjection = {
   nearestLon?: number
 }
 
-
-import { RIBBON_POINTS } from './ligne050_ribbon_dense'
-import { ANCRES_PK_S } from './ancres_pk_s'
+import { RIBBON_POINTS } from "./ligne050_ribbon_dense"
+import { ANCRES_PK_S } from "./ancres_pk_s"
 
 // drapeau simple : le moteur est prêt quand les données sont chargées
 let engineReady = false
@@ -48,16 +51,17 @@ let engineReady = false
 // ----- GARDE-FOU #1 : anti-saut PK (mémoire du dernier PK accepté) -----
 let lastAcceptedPk: { pk: number; atMs: number } | null = null
 
-// ----- GARDE-FOU #2 : continuité directionnelle (évite les inversions franches) -----
-let lastDirection: 1 | -1 | null = null
+// ===== direction attendue (source train ou override manuel) =====
+// +1 => PK croissants ; -1 => PK décroissants
+let expectedDirection: 1 | -1 | null = null
+let expectedDirectionSource: string | null = null
+let expectedDirectionTrain: string | null = null
+let expectedDirListenerAttached = false
 
-// seuil minimal (km) au-delà duquel une inversion de sens est jugée suspecte
+// seuil minimal (km) au-delà duquel un mouvement dans le mauvais sens est jugé suspect
 const DIRECTION_CHANGE_THRESHOLD_KM = 0.3
 
-
 // Seuils simples (à ajuster après tests terrain)
-// - vitesse max "plausible" (km/h) pour borner un saut entre deux points GPS
-// - marge fixe (km) pour tolérer un peu de bruit
 const MAX_PLAUSIBLE_SPEED_KMH = 300
 const PK_JUMP_MARGIN_KM = 0.25
 
@@ -66,17 +70,13 @@ const PK_JUMP_MARGIN_KM = 0.25
 const MAX_DISTANCE_FOR_FALLBACK_M = 80
 
 // Extrapolation ultra limitée au-delà des ancres (km)
-// But : éviter pkCandidate=null quand le ruban dépasse légèrement la dernière ancre.
 const PK_FROM_S_EXTRAPOLATE_MARGIN_KM = 5
-
-
 
 // ancres triées par s_km croissant (une seule fois)
 const SORTED_ANCHORS = [...ANCRES_PK_S].sort((a, b) => a.s_km - b.s_km)
 
 /**
  * Distance géodésique approximative (m) entre 2 points lat/lon en degrés.
- * Suffisant pour notre usage "sur / hors ruban".
  */
 function haversineMeters(lat1: number, lon1: number, lat2: number, lon2: number): number {
   const R = 6371000 // m
@@ -105,42 +105,34 @@ function pkFromS(s_km: number | null | undefined): number | null {
   const first = SORTED_ANCHORS[0]
   const last = SORTED_ANCHORS[SORTED_ANCHORS.length - 1]
 
-  // ✅ Hors domaine ancres => pas de PK
-  // Exception : extrapolation ultra limitée au-delà de la dernière ancre,
-  // pour couvrir un ruban qui dépasse légèrement last.s_km.
   if (s_km < first.s_km) {
     return null
   }
 
   if (s_km > last.s_km) {
-    // Trop loin au-delà des ancres => on refuse (pas de PK inventé)
     if (s_km > last.s_km + PK_FROM_S_EXTRAPOLATE_MARGIN_KM) {
       return null
     }
 
     // Extrapolation linéaire basée sur le dernier segment "non plat"
-    // (on cherche depuis la fin un couple (a,b) avec b.s_km != a.s_km)
     for (let i = SORTED_ANCHORS.length - 2; i >= 0; i--) {
       const a = SORTED_ANCHORS[i]
       const b = SORTED_ANCHORS[i + 1]
       if (b.s_km === a.s_km) continue
 
-      const t = (s_km - a.s_km) / (b.s_km - a.s_km) // t > 1 possible (extrapolation)
+      const t = (s_km - a.s_km) / (b.s_km - a.s_km)
       return a.pk + t * (b.pk - a.pk)
     }
 
-    // Si on n'a trouvé aucun segment exploitable
     return null
   }
 
   // Recherche du segment [i, i+1] qui encadre s_km
-
   for (let i = 0; i < SORTED_ANCHORS.length - 1; i++) {
     const a = SORTED_ANCHORS[i]
     const b = SORTED_ANCHORS[i + 1]
 
     if (b.s_km === a.s_km) {
-      // segment "plat" → on saute (cas 615.9 / 616.0 avec s=0)
       continue
     }
 
@@ -150,41 +142,86 @@ function pkFromS(s_km: number | null | undefined): number | null {
     }
   }
 
-  // Fallback (ne devrait pas arriver si s_km est dans [first,last])
   return null
 }
 
+function attachExpectedDirectionListenerIfNeeded() {
+  if (expectedDirListenerAttached) return
+  if (typeof window === "undefined") return
+
+  const handler = (e: Event) => {
+    const ce = e as CustomEvent<any>
+    const d = ce?.detail ?? {}
+    const dir = d?.expectedDir
+
+    if (dir !== "UP" && dir !== "DOWN") return
+
+    const next: 1 | -1 = dir === "UP" ? 1 : -1
+
+    const train =
+      typeof d?.train === "string" && d.train.trim().length > 0 ? d.train.trim() : null
+    const source =
+      typeof d?.source === "string" && d.source.trim().length > 0 ? d.source.trim() : null
+
+    const changed = expectedDirection !== next || expectedDirectionTrain !== train
+
+    expectedDirection = next
+    expectedDirectionTrain = train
+    expectedDirectionSource = source
+
+    // Important : si contexte changé, on repart propre (évite mémoire d’un run précédent)
+    if (changed) {
+      lastAcceptedPk = null
+    }
+  }
+
+  window.addEventListener("lim:expected-direction", handler as EventListener)
+  window.addEventListener("ft:expected-direction", handler as EventListener)
+  expectedDirListenerAttached = true
+}
+
+/**
+ * Permet de repartir "propre" côté mémoire PK sans toucher à la direction attendue.
+ * Utile pour les replays.
+ */
+export function resetGpsPkEngineMemory(): void {
+  lastAcceptedPk = null
+}
 
 /**
  * Initialisation du moteur GPS → PK.
- * Ici, les données sont déjà embarquées dans le bundle → on marque
- * simplement le moteur comme "prêt".
  */
 export async function initGpsPkEngine(): Promise<void> {
   if (engineReady) return
   engineReady = true
-    lastAcceptedPk = null
 
-        lastDirection = null
+  lastAcceptedPk = null
+  expectedDirection = null
+  expectedDirectionTrain = null
+  expectedDirectionSource = null
 
+  attachExpectedDirectionListenerIfNeeded()
 
-
-  if (typeof window !== 'undefined') {
-    console.log('[gpsPkEngine] init — ruban LAV050 + ancres PK↔s chargés')
-    console.log('[gpsPkEngine] points ruban :', RIBBON_POINTS.length)
-    console.log('[gpsPkEngine] ancres PK↔s  :', SORTED_ANCHORS.length)
+  if (typeof window !== "undefined") {
+    console.log("[gpsPkEngine] init — ruban LAV050 + ancres PK↔s chargés")
+    console.log("[gpsPkEngine] points ruban :", RIBBON_POINTS.length)
+    console.log("[gpsPkEngine] ancres PK↔s  :", SORTED_ANCHORS.length)
   }
+}
+
+type ProjectOptions = {
+  /**
+   * Timestamp à utiliser pour les garde-fous (ms).
+   * - temps réel : laisser undefined
+   * - replay : fournir la date du log (ex: Date.parse(obj.t))
+   */
+  nowMs?: number
 }
 
 /**
  * Projection d’un point (lat, lon) sur la ligne de référence.
- *
- * - Cherche le point du ruban le plus proche (en m, via haversine).
- * - Récupère s_km à cet endroit du ruban.
- * - Interpole un PK à partir de la table d’ancres PK↔s.
- * - Renvoie également la distance minimale au ruban en mètres.
  */
-export function projectGpsToPk(lat: number, lon: number): GpsPkProjection | null {
+export function projectGpsToPk(lat: number, lon: number, options?: ProjectOptions): GpsPkProjection | null {
   if (!engineReady) {
     return null
   }
@@ -203,7 +240,6 @@ export function projectGpsToPk(lat: number, lon: number): GpsPkProjection | null
   let bestIdx = -1
   let bestDist = Number.POSITIVE_INFINITY
 
-  // brute force : on balaie tous les points du ruban
   for (let i = 0; i < RIBBON_POINTS.length; i++) {
     const p = RIBBON_POINTS[i]
     const d = haversineMeters(lat, lon, p.lat, p.lon)
@@ -225,17 +261,23 @@ export function projectGpsToPk(lat: number, lon: number): GpsPkProjection | null
   // ===== DEBUG : snapshot de la mémoire AVANT décision =====
   const memLastPk = lastAcceptedPk?.pk ?? null
   const memLastAt = lastAcceptedPk?.atMs ?? null
-  const memLastDir = lastDirection ?? null
+  const memExpectedDir = expectedDirection ?? null
+  const memExpectedSource = expectedDirectionSource ?? null
+  const memExpectedTrain = expectedDirectionTrain ?? null
 
-  // ----- GARDE-FOU #1 : anti-saut PK -----
-  const nowMs = Date.now()
+  // ✅ IMPORTANT : en replay, on doit utiliser le timestamp du log
+  const nowMs =
+    typeof options?.nowMs === "number" && Number.isFinite(options.nowMs)
+      ? Math.trunc(options.nowMs)
+      : Date.now()
+
   let pk = pkCandidate
 
-  // On va remplir un objet décision très complet
   let decisionReason:
     | "accepted"
     | "first_fix"
     | "no_candidate"
+    | "fallback_lastAccepted"
     | "rejected_jump"
     | "rejected_direction" = "no_candidate"
 
@@ -245,9 +287,6 @@ export function projectGpsToPk(lat: number, lon: number): GpsPkProjection | null
   let dir: 1 | -1 | null = null
 
   if (pkCandidate == null || !Number.isFinite(pkCandidate)) {
-    // Hors domaine ancres / pas exploitable
-    // Fallback déterministe : si on est proche du ruban et qu'on a un dernier PK accepté,
-    // on conserve ce PK au lieu de produire pk=null.
     if (
       lastAcceptedPk &&
       Number.isFinite(lastAcceptedPk.pk) &&
@@ -255,7 +294,6 @@ export function projectGpsToPk(lat: number, lon: number): GpsPkProjection | null
       distance_m <= MAX_DISTANCE_FOR_FALLBACK_M
     ) {
       pk = lastAcceptedPk.pk
-      // on "rafraîchit" le timestamp pour éviter que dt explose ensuite
       lastAcceptedPk = { pk: lastAcceptedPk.pk, atMs: nowMs }
       decisionReason = "fallback_lastAccepted"
     } else {
@@ -270,35 +308,30 @@ export function projectGpsToPk(lat: number, lon: number): GpsPkProjection | null
     const deltaPk = pkCandidate - lastAcceptedPk.pk
     jumpKm = Math.abs(deltaPk)
 
-    // direction du mouvement proposé
+    // direction du mouvement proposé (GPS observé)
     dir = deltaPk >= 0 ? 1 : -1
 
-
     if (jumpKm > allowedJumpKm) {
-      // GARDE-FOU #1 : saut trop grand → rejet
       pk = lastAcceptedPk.pk
       decisionReason = "rejected_jump"
     } else {
-      // GARDE-FOU #2 : continuité directionnelle (inversion franche)
+      // ✅ direction attendue FIXE (train/manuel)
       if (
-        lastDirection != null &&
-        dir !== lastDirection &&
+        expectedDirection != null &&
+        dir !== expectedDirection &&
         jumpKm >= DIRECTION_CHANGE_THRESHOLD_KM
       ) {
         pk = lastAcceptedPk.pk
         decisionReason = "rejected_direction"
       } else {
-        // accepté
         pk = pkCandidate
         lastAcceptedPk = { pk: pkCandidate, atMs: nowMs }
-        lastDirection = dir
         decisionReason = "accepted"
       }
     }
   } else {
-    // Premier PK valide : on initialise la mémoire
+    // Premier PK valide : initialise la mémoire
     lastAcceptedPk = { pk: pkCandidate, atMs: nowMs }
-    lastDirection = null
     pk = pkCandidate
     decisionReason = "first_fix"
   }
@@ -308,20 +341,22 @@ export function projectGpsToPk(lat: number, lon: number): GpsPkProjection | null
     s_km,
     distance_m,
 
-    // DEBUG PK (hyper utile)
     pkCandidate,
     pkDecision: {
       reason: decisionReason,
       lastAcceptedPk: memLastPk,
       lastAcceptedAtMs: memLastAt,
-      lastDirection: memLastDir,
+
+      expectedDirection: memExpectedDir,
+      expectedDirectionSource: memExpectedSource,
+      expectedDirectionTrain: memExpectedTrain,
+
       dtMs,
       allowedJumpKm,
       jumpKm,
       dir,
     },
 
-    // DEBUG ruban
     nearestIdx: bestIdx,
     nearestLat: nearest.lat,
     nearestLon: nearest.lon,

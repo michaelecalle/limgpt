@@ -9,11 +9,12 @@ import {
   logTestEvent,
 } from '../../lib/testLogger'
 
-import { initGpsPkEngine, projectGpsToPk } from '../../lib/gpsPkEngine'
+import { initGpsPkEngine, projectGpsToPk, resetGpsPkEngineMemory } from '../../lib/gpsPkEngine'
 import { RIBBON_POINTS } from '../../lib/ligne050_ribbon_dense'
 
 
 import { getOcrOnlineEnabled, setOcrOnlineEnabled } from '../../lib/ocrSettings'
+
 import { uploadPdfToSynology } from '../../lib/synologyUpload'
 
 import { APP_VERSION } from '../version'
@@ -232,6 +233,8 @@ ${coords}
         await initGpsPkEngine()
         setGpsPkReady(true)
       }
+      // ✅ Replay : repartir d’une mémoire PK propre (sinon dtMs est faux)
+      resetGpsPkEngineMemory()
 
       const text = await file.text()
       const lines = text.split(/\r?\n/)
@@ -267,7 +270,17 @@ ${coords}
         if (typeof lat !== 'number' || typeof lon !== 'number') continue
         inCount++
 
-        const proj = projectGpsToPk(lat, lon)
+        // ✅ Horloge replay : on utilise le timestamp du log si possible
+        let nowMs: number | undefined = undefined
+        if (typeof t === 'number' && Number.isFinite(t)) {
+          nowMs = Math.trunc(t)
+        } else if (typeof t === 'string' && t.trim().length > 0) {
+          const parsed = Date.parse(t)
+          if (Number.isFinite(parsed)) nowMs = parsed
+        }
+
+        const proj = projectGpsToPk(lat, lon, { nowMs })
+
 
         // On sort un enregistrement “projection pure” (sans logique ORANGE/RED/etc.)
         const record = {
@@ -415,7 +428,94 @@ ${coords}
     return rawComp ? String(rawComp) : undefined
   })
 
+  // =========================
+  // Direction attendue (PK)
+  // - Source #1 : numéro de train (pair => PK décroissants, impair => PK croissants)
+  // - Visible dans la TitleBar (flèche)
+  // - Changement manuel possible (confirm) => override
+  // - Une fois déterminée : ne change plus automatiquement
+  // =========================
+  type ExpectedDir = 'UP' | 'DOWN' // UP => PK croissants, DOWN => PK décroissants
+
+  const [expectedDir, setExpectedDir] = useState<ExpectedDir | null>(null)
+  const expectedDirLockedRef = useRef(false)
+  const expectedDirSourceRef = useRef<'train_number' | 'manual' | null>(null)
+  const expectedDirTrainRef = useRef<string | null>(null) // ✅ train ayant servi au lock
+
+  const emitExpectedDir = (dir: ExpectedDir, meta: { source: string }) => {
+    // diffusion globale (FT ou autres modules pourront écouter)
+    const detail = {
+      expectedDir: dir,
+      pkTrend: dir === 'UP' ? 'increasing' : 'decreasing',
+      train: trainDisplay ?? null,
+      locked: true,
+      source: meta.source,
+    }
+
+    window.dispatchEvent(new CustomEvent('lim:expected-direction', { detail }))
+    window.dispatchEvent(new CustomEvent('ft:expected-direction', { detail }))
+
+    // rattrapage boot (race listeners)
+    window.setTimeout(() => {
+      window.dispatchEvent(new CustomEvent('lim:expected-direction', { detail }))
+      window.dispatchEvent(new CustomEvent('ft:expected-direction', { detail }))
+    }, 400)
+  }
+
+  // Lock automatique dès qu'on connaît le numéro de train
+  // ✅ Si le train change, on re-lock automatiquement (nouveau run/nouveau PDF)
+  useEffect(() => {
+    if (!trainDisplay) return
+
+    const n = parseInt(trainDisplay, 10)
+    if (!Number.isFinite(n)) return
+
+    const trainChanged = expectedDirTrainRef.current !== trainDisplay
+
+    // si même train + déjà lock => rien à faire
+    if (!trainChanged && expectedDirLockedRef.current) return
+
+    const dir: ExpectedDir = n % 2 === 0 ? 'DOWN' : 'UP'
+
+    expectedDirLockedRef.current = true
+    expectedDirTrainRef.current = trainDisplay
+    expectedDirSourceRef.current = 'train_number'
+    setExpectedDir(dir)
+
+    logTestEvent('direction:lock', {
+      source: 'train_number',
+      train: trainDisplay,
+      expectedDir: dir,
+      pkTrend: dir === 'UP' ? 'increasing' : 'decreasing',
+      trainChanged,
+    })
+
+    emitExpectedDir(dir, { source: 'train_number' })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [trainDisplay])
+
+    useEffect(() => {
+    const reset = () => {
+      expectedDirLockedRef.current = false
+      expectedDirTrainRef.current = null
+      expectedDirSourceRef.current = null
+      setExpectedDir(null)
+
+      logTestEvent('direction:reset', { source: 'clear_pdf' })
+    }
+
+    window.addEventListener('lim:clear-pdf', reset as EventListener)
+    window.addEventListener('ft:clear-pdf', reset as EventListener)
+    return () => {
+      window.removeEventListener('lim:clear-pdf', reset as EventListener)
+      window.removeEventListener('ft:clear-pdf', reset as EventListener)
+    }
+  }, [])
+
+
+
   const [folded, setFolded] = useState(false)
+
 
     // ----- INFOS (à afficher depuis la roue dentée) -----
   const [aboutOpen, setAboutOpen] = useState(false)
@@ -1499,7 +1599,7 @@ ${coords}
                 )}
               </button>
 
-              {/* GPS */}
+               {/* GPS */}
               <button
                 type="button"
                 className={`
@@ -1544,7 +1644,68 @@ ${coords}
                 )}
               </button>
 
+              {/* Sens attendu (PK) — flèche + changement manuel (confirm) */}
+              <button
+                type="button"
+                onClick={() => {
+                  // ✅ Simulation : on bloque les commandes de l'app (seul le player agit)
+                  if (simulationEnabled) {
+                    logTestEvent('ui:blocked', {
+                      control: 'expectedDirection',
+                      source: 'titlebar',
+                    })
+                    return
+                  }
+
+                  if (!expectedDir) {
+                    window.alert('Sens attendu indisponible (numéro de train manquant).')
+                    return
+                  }
+
+                  const currentLabel =
+                    expectedDir === 'DOWN' ? '⬇️ PK décroissants' : '⬆️ PK croissants'
+                  const nextDir = expectedDir === 'DOWN' ? 'UP' : 'DOWN'
+                  const nextLabel =
+                    nextDir === 'DOWN' ? '⬇️ PK décroissants' : '⬆️ PK croissants'
+
+                  const ok = window.confirm(
+                    `Changer le sens attendu ?\n\nActuel : ${currentLabel}\nNouveau : ${nextLabel}\n\n(Le train ne change pas de sens : utilisez ceci seulement si le numéro de train ne correspond pas au sens réel.)`
+                  )
+                  if (!ok) return
+
+                  setExpectedDir(nextDir)
+                  expectedDirLockedRef.current = true
+                  expectedDirSourceRef.current = 'manual'
+
+                  logTestEvent('direction:manual_override', {
+                    train: trainDisplay ?? null,
+                    from: expectedDir,
+                    to: nextDir,
+                    source: 'titlebar',
+                  })
+
+                  emitExpectedDir(nextDir, { source: 'manual_override' })
+                }}
+                className={`
+                  h-7 w-7 rounded-full flex items-center justify-center text-[12px] bg-white dark:bg-zinc-900 transition
+                  ${expectedDir ? 'border-[3px] border-zinc-400 text-zinc-700 dark:border-zinc-500 dark:text-zinc-100' : 'border-[3px] border-zinc-200 text-zinc-400 dark:border-zinc-700 dark:text-zinc-500'}
+                `}
+                title={
+                  expectedDir === 'DOWN'
+                    ? 'Sens attendu : PK décroissants (train pair) — cliquer pour changer'
+                    : expectedDir === 'UP'
+                      ? 'Sens attendu : PK croissants (train impair) — cliquer pour changer'
+                      : 'Sens attendu indisponible'
+                }
+                aria-label="Sens attendu PK"
+              >
+                <span aria-hidden>
+                  {expectedDir === 'DOWN' ? '⬇️' : expectedDir === 'UP' ? '⬆️' : '↕️'}
+                </span>
+              </button>
+
               {/* Mode horaire — indicateur seulement, plus cliquable */}
+
               <button
                 type="button"
                 className={`h-7 w-7 rounded-full flex items-center justify-center text-[12px] bg-white dark:bg-zinc-900 transition cursor-default
@@ -1764,6 +1925,18 @@ onClick={async () => {
   // - retour à l'état initial PDF
   setPdfMode('blue')
   setPdfLoading(false)
+
+    // ✅ STOP doit aussi annuler le garde-fou PDF + nettoyer l'état global
+  stopPdfLoadingGuard()
+
+  // - reset avance/retard (texte + delta précis)
+  setScheduleDeltaSec(null)
+
+  // - reset global (FT + TitleBar : direction attendue, etc.)
+  window.dispatchEvent(new CustomEvent('lim:clear-pdf'))
+  window.dispatchEvent(new CustomEvent('ft:clear-pdf'))
+  window.dispatchEvent(new CustomEvent('lim:pdf-raw', { detail: { file: null } }))
+
 
   // 2) Stop session de test (on fige les logs)
   if (testRecording) {

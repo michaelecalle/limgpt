@@ -457,9 +457,29 @@ export default function FT({ variant = "classic" }: FTProps) {
   const autoScrollEnabledRef = React.useRef(false);
   const referenceModeRef = React.useRef<ReferenceMode>("HORAIRE");
 
+  // =========================
+  // Direction attendue (source: TitleBar)
+  // UP => PK croissants, DOWN => PK décroissants
+  // =========================
+  type ExpectedDir = "UP" | "DOWN";
+
+  const expectedDirRef = React.useRef<ExpectedDir | null>(null);
+  const expectedDirTrainRef = React.useRef<string | null>(null);
+  const expectedDirSourceRef = React.useRef<string | null>(null);
+
+  // stats cohérence GPS (fenêtre glissante)
+  const dirLastPkRef = React.useRef<number | null>(null);
+  const dirWindowRef = React.useRef<{ startTs: number; sample: number; mismatch: number }>({
+    startTs: 0,
+    sample: 0,
+    mismatch: 0,
+  });
+  const dirLastMismatchEmitAtRef = React.useRef<number>(0);
+
   useEffect(() => {
     referenceModeRef.current = referenceMode;
   }, [referenceMode]);
+
 
   useEffect(() => {
     autoScrollEnabledRef.current = autoScrollEnabled;
@@ -491,6 +511,40 @@ export default function FT({ variant = "classic" }: FTProps) {
       window.removeEventListener("lim:test-mode", handleTestMode as EventListener);
     };
   }, []);
+
+  // écoute du sens attendu (venant de TitleBar)
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const ce = e as CustomEvent<any>;
+      const d = ce?.detail ?? {};
+      const dir = d?.expectedDir as string | undefined;
+
+      if (dir !== "UP" && dir !== "DOWN") return;
+
+      expectedDirRef.current = dir;
+      expectedDirTrainRef.current = typeof d?.train === "string" ? d.train : null;
+      expectedDirSourceRef.current = typeof d?.source === "string" ? d.source : null;
+
+      // reset stats (on repart propre à chaque changement de sens)
+      dirLastPkRef.current = null;
+      dirWindowRef.current = { startTs: 0, sample: 0, mismatch: 0 };
+      dirLastMismatchEmitAtRef.current = 0;
+
+      logTestEvent("direction:expected:set", {
+        expectedDir: dir,
+        train: expectedDirTrainRef.current,
+        source: expectedDirSourceRef.current,
+      });
+    };
+
+    window.addEventListener("lim:expected-direction", handler as EventListener);
+    window.addEventListener("ft:expected-direction", handler as EventListener);
+    return () => {
+      window.removeEventListener("lim:expected-direction", handler as EventListener);
+      window.removeEventListener("ft:expected-direction", handler as EventListener);
+    };
+  }, []);
+
 
   const autoScrollBaseRef =
     React.useRef<{
@@ -1025,8 +1079,16 @@ export default function FT({ variant = "classic" }: FTProps) {
   const GPS_JUMP_MAX_SPEED_KMH = 420; // plafond vitesse plausible (km/h) pour tolérance dynamique
   const GPS_JUMP_MIN_ELAPSED_SEC = 1.0; // ignore la détection si delta t trop faible
 
+  // ===== Cohérence sens attendu (train) vs sens observé GPS =====
+  const DIR_MIN_DELTA_KM = 0.02; // ignore les micro-variations (<20 m)
+  const DIR_WINDOW_MS = 15_000; // fenêtre glissante
+  const DIR_MIN_SAMPLES = 6; // nombre minimal d'échantillons qualifiés
+  const DIR_MISMATCH_MIN_RATIO = 0.8; // % d'échantillons en sens opposé pour alerter
+  const DIR_MISMATCH_COOLDOWN_MS = 30_000; // anti-spam
+
   // Timer en cours pour le passage différé en mode HORAIRE
   const orangeTimeoutRef = React.useRef<number | null>(null);
+
 
   // Timestamp de démarrage de l’hystérésis ORANGE (pour calcul remaining/elapsed)
   const orangeTimeoutStartedAtRef = React.useRef<number | null>(null);
@@ -2126,7 +2188,90 @@ const computeFixedDelay = (now: Date, ftMinutes: number) => {
         lastCoherentTsRef.current = sampleTs;
       }
 
+      // ===== Vérif cohérence sens attendu (train) vs sens observé (GPS) =====
+      const expectedDir = expectedDirRef.current;
+      if (
+        expectedDir &&
+        hasGpsFix &&
+        onLine &&
+        !isStale &&
+        pk != null &&
+        !pkJumpGuardActiveRef.current
+      ) {
+        const prevPk = dirLastPkRef.current;
+
+        if (typeof prevPk === "number" && Number.isFinite(prevPk)) {
+          const dPk = pk - prevPk;
+
+          // ignore micro-variations / immobilité
+          if (Math.abs(dPk) >= DIR_MIN_DELTA_KM) {
+            const observedDir: "UP" | "DOWN" = dPk > 0 ? "UP" : "DOWN";
+
+            // fenêtre glissante
+            const w = dirWindowRef.current;
+            if (w.startTs <= 0) {
+              w.startTs = nowTs;
+              w.sample = 0;
+              w.mismatch = 0;
+            }
+            if (nowTs - w.startTs > DIR_WINDOW_MS) {
+              w.startTs = nowTs;
+              w.sample = 0;
+              w.mismatch = 0;
+            }
+
+            w.sample += 1;
+            if (observedDir !== expectedDir) w.mismatch += 1;
+
+            const ratio = w.sample > 0 ? w.mismatch / w.sample : 0;
+
+            // alerte si incohérence persistante (anti-spam)
+            if (
+              w.sample >= DIR_MIN_SAMPLES &&
+              ratio >= DIR_MISMATCH_MIN_RATIO &&
+              nowTs - dirLastMismatchEmitAtRef.current >= DIR_MISMATCH_COOLDOWN_MS
+            ) {
+              dirLastMismatchEmitAtRef.current = nowTs;
+
+              logTestEvent("direction:mismatch", {
+                train: expectedDirTrainRef.current,
+                expectedDir,
+                observedDir,
+                sampleCount: w.sample,
+                mismatchCount: w.mismatch,
+                mismatchRatio: ratio,
+                source: expectedDirSourceRef.current,
+                pk,
+                prevPk,
+              });
+
+              // event UI (TitleBar pourra afficher une invite "confirmer le sens")
+              window.dispatchEvent(
+                new CustomEvent("lim:direction-mismatch", {
+                  detail: {
+                    train: expectedDirTrainRef.current,
+                    expectedDir,
+                    observedDir,
+                    sampleCount: w.sample,
+                    mismatchCount: w.mismatch,
+                    mismatchRatio: ratio,
+                    hint: "Vérifier le sens (flèche) dans la TitleBar",
+                  },
+                })
+              );
+            }
+
+            // mise à jour du PK de référence direction
+            dirLastPkRef.current = pk;
+          }
+        } else {
+          // première référence direction
+          dirLastPkRef.current = pk;
+        }
+      }
+
       const distRibbonM =
+
         typeof (detail as any).distance_m === "number"
           ? (detail as any).distance_m
           : null;
