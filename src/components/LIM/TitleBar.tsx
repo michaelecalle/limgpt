@@ -1065,13 +1065,14 @@ ${coords}
     }
   }, [])
 
-  // ✅ GPS (source de vérité FT) : la TitleBar affiche UNIQUEMENT l'état calculé dans FT
-  // Garde-fou #3 : en ORANGE, on conserve le dernier PK GREEN affiché (pas de "danse")
+  // ✅ GPS (source de vérité FT) : la TitleBar affiche l'état calculé dans FT
+  // En ORANGE : on affiche aussi le PK brut (pkRaw) si disponible, sinon on conserve l'affichage précédent.
   useEffect(() => {
     const handler = (e: Event) => {
       const ce = e as CustomEvent
       const state = ce?.detail?.state as 'RED' | 'ORANGE' | 'GREEN' | undefined
       const pk = ce?.detail?.pk as number | null | undefined
+      const pkRaw = ce?.detail?.pkRaw as number | null | undefined
 
       if (state === 'RED') {
         setGpsState(0)
@@ -1081,7 +1082,12 @@ ${coords}
 
       if (state === 'ORANGE') {
         setGpsState(1)
-        // ✅ garde-fou #3 : ne pas effacer le PK affiché en ORANGE
+
+        // ✅ Nouveau : afficher le PK même en ORANGE (si pkRaw est exploitable)
+        if (typeof pkRaw === 'number' && Number.isFinite(pkRaw)) {
+          setGpsPkDisplay(pkRaw.toFixed(1))
+        }
+        // Sinon : on garde la dernière valeur affichée (garde-fou anti-"danse")
         return
       }
 
@@ -1100,6 +1106,7 @@ ${coords}
       window.removeEventListener('lim:gps-state', handler as EventListener)
     }
   }, [])
+
 
 
   // synchronise le bouton Play/Pause + état horaire/standby si FT change le mode auto-scroll
@@ -1238,6 +1245,13 @@ ${coords}
               nearestIdx: typeof nearestIdx === 'number' ? nearestIdx : null,
               nearestLat: typeof nearestLat === 'number' ? nearestLat : null,
               nearestLon: typeof nearestLon === 'number' ? nearestLon : null,
+                            // ✅ DEBUG PK (nouveau)
+              pkCandidate:
+                typeof pkCandidate === 'number' && Number.isFinite(pkCandidate)
+                  ? pkCandidate
+                  : null,
+              pkDecision: pkDecision ?? null,
+
             },
           })
         )
