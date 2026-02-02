@@ -19,7 +19,19 @@ export const ANCRES_PK_S: AnchorPkS[] = [
     label: 'LIMITE ADIF-LFPSA',
   },
   {
+    // Frontière France–Espagne (extrémité nord du ruban)
+    // PK ADIF calculé via l'offset : (752.4 ADIF ↔ 44.4 LFP) => ADIF = LFP + 708.0
+    // Frontière : 24.6 LFP => 732.6 ADIF
+    pk: 732.6,
+    s_km: 308.813,
+    lat: 42.4554865,
+    lon: 2.8619561,
+    index_ruban: 12890,
+    label: 'FRONTIERE FRANCE-ESPAGNE',
+  },
+  {
     pk: 749.6,
+
     s_km: 286.273,
     lat: 42.2645806,
     lon: 2.9430284,

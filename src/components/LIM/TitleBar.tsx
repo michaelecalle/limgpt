@@ -9,9 +9,9 @@ import {
   logTestEvent,
 } from '../../lib/testLogger'
 
-
-
 import { initGpsPkEngine, projectGpsToPk } from '../../lib/gpsPkEngine'
+import { RIBBON_POINTS } from '../../lib/ligne050_ribbon_dense'
+
 
 import { getOcrOnlineEnabled, setOcrOnlineEnabled } from '../../lib/ocrSettings'
 import { uploadPdfToSynology } from '../../lib/synologyUpload'
@@ -149,6 +149,179 @@ export default function TitleBar() {
 
   // ✅ delta précis (en secondes) si FT le fournit
   const [scheduleDeltaSec, setScheduleDeltaSec] = useState<number | null>(null)
+
+    // =========================
+  // GPS Replay (offline) — projection pure
+  // =========================
+  const gpsReplayInputRef = useRef<HTMLInputElement>(null)
+  const [gpsReplayBusy, setGpsReplayBusy] = useState(false)
+
+  const downloadTextFile = (filename: string, content: string, mime = 'text/plain') => {
+    const blob = new Blob([content], { type: mime })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = filename
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    URL.revokeObjectURL(url)
+  }
+
+  const buildRibbonKml = () => {
+    const esc = (s: any) =>
+      String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+
+    if (!Array.isArray(RIBBON_POINTS) || RIBBON_POINTS.length === 0) {
+      throw new Error('RIBBON_POINTS vide')
+    }
+
+    const first = RIBBON_POINTS[0]
+    const last = RIBBON_POINTS[RIBBON_POINTS.length - 1]
+
+    let maxLatIdx = 0
+    for (let i = 1; i < RIBBON_POINTS.length; i++) {
+      if (RIBBON_POINTS[i].lat > RIBBON_POINTS[maxLatIdx].lat) maxLatIdx = i
+    }
+    const north = RIBBON_POINTS[maxLatIdx]
+
+    const coords = RIBBON_POINTS.map((p) => `${p.lon},${p.lat},0`).join('\n')
+
+    const pointPlacemark = (name: string, p: any, extra: string) => `
+  <Placemark>
+    <name>${esc(name)}</name>
+    <description>${esc(extra)}</description>
+    <Point><coordinates>${p.lon},${p.lat},0</coordinates></Point>
+  </Placemark>`
+
+    const kml = `<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2">
+<Document>
+  <name>LIM ribbon</name>
+  <description>Export du ruban RIBBON_POINTS</description>
+
+  <Placemark>
+    <name>Ruban LAV050 (LineString)</name>
+    <description>Points=${RIBBON_POINTS.length}</description>
+    <Style><LineStyle><width>3</width></LineStyle></Style>
+    <LineString>
+      <tessellate>1</tessellate>
+      <coordinates>
+${coords}
+      </coordinates>
+    </LineString>
+  </Placemark>
+
+  ${pointPlacemark('Start (index 0)', first, `index=0 | s_km=${first?.s_km ?? 'null'}`)}
+  ${pointPlacemark('End (last index)', last, `index=${RIBBON_POINTS.length - 1} | s_km=${last?.s_km ?? 'null'}`)}
+  ${pointPlacemark('Most north (max lat)', north, `index=${maxLatIdx} | s_km=${north?.s_km ?? 'null'}`)}
+
+</Document>
+</kml>`
+
+    return kml
+  }
+
+
+  const runGpsReplayFromNdjson = async (file: File) => {
+    try {
+      setGpsReplayBusy(true)
+
+      // s’assure que le moteur est prêt (il est déjà init au boot, mais garde-fou)
+      if (!gpsPkReady) {
+        await initGpsPkEngine()
+        setGpsPkReady(true)
+      }
+
+      const text = await file.text()
+      const lines = text.split(/\r?\n/)
+
+      const outLines: string[] = []
+      outLines.push('# LIM gps replay projection')
+      outLines.push(`# source=${file.name}`)
+      outLines.push(`# generatedAt=${new Date().toISOString()}`)
+      outLines.push('# format=one-JSON-per-line (NDJSON)')
+      outLines.push('# kind=gps:replay:projection')
+
+      let inCount = 0
+      let outCount = 0
+
+      for (const raw of lines) {
+        const line = raw.trim()
+        if (!line || line.startsWith('#')) continue
+
+        let obj: any
+        try {
+          obj = JSON.parse(line)
+        } catch {
+          continue
+        }
+
+        if (obj?.kind !== 'gps:position') continue
+        const p = obj?.payload ?? {}
+        const lat = p?.lat
+        const lon = p?.lon
+        const accuracy = p?.accuracy
+        const t = obj?.t
+
+        if (typeof lat !== 'number' || typeof lon !== 'number') continue
+        inCount++
+
+        const proj = projectGpsToPk(lat, lon)
+
+        // On sort un enregistrement “projection pure” (sans logique ORANGE/RED/etc.)
+        const record = {
+          t: t ?? null,
+          kind: 'gps:replay:projection',
+          payload: {
+            lat,
+            lon,
+            accuracy: typeof accuracy === 'number' ? accuracy : null,
+
+            // sortie projection pure
+            projOk: !!proj,
+            pk: proj?.pk ?? null,
+            s_km: proj?.s_km ?? null,
+            distance_m: proj?.distance_m ?? null,
+
+            // debug utile si dispo
+            nearestIdx: proj?.nearestIdx ?? null,
+            nearestLat: proj?.nearestLat ?? null,
+            nearestLon: proj?.nearestLon ?? null,
+            pkCandidate: proj?.pkCandidate ?? null,
+            pkDecision: proj?.pkDecision ?? null,
+          },
+        }
+
+        outLines.push(JSON.stringify(record))
+        outCount++
+      }
+
+      outLines.push(`# stats_in=${inCount}`)
+      outLines.push(`# stats_out=${outCount}`)
+
+      downloadTextFile('gps_replay_projection.ndjson', outLines.join('\n'), 'application/x-ndjson')
+      window.alert(`Replay GPS terminé.\n\nPoints lus: ${inCount}\nPoints exportés: ${outCount}`)
+    } catch (err: any) {
+      const msg = err?.message ?? String(err)
+      const stack = err?.stack ? String(err.stack) : ''
+
+      console.warn('[TitleBar] GPS replay failed', err)
+      if (stack) {
+        console.warn('[TitleBar] GPS replay stack:\n' + stack)
+      }
+
+      // on affiche une version courte pour avoir le fichier/ligne sur iPad
+      const stackLine = stack.split('\n').slice(0, 2).join('\n')
+      window.alert(`Replay GPS impossible: ${msg}\n\n${stackLine}`)
+    } finally {
+      setGpsReplayBusy(false)
+      // reset input pour permettre re-import même fichier
+      if (gpsReplayInputRef.current) gpsReplayInputRef.current.value = ''
+      setGpsReplayBusy(false)
+    }
+  }
+
 
   const formatSignedHMS = (deltaSec: number): string => {
     const sign = deltaSec < 0 ? '-' : '+'
@@ -1894,6 +2067,47 @@ onClick={async () => {
 
               <div className="h-px bg-zinc-200/80 dark:bg-zinc-700/80 my-2" />
 
+                            {/* GPS Replay (offline) — projection pure */}
+              {testModeEnabled && (
+                <button
+                  type="button"
+                  onClick={() => gpsReplayInputRef.current?.click()}
+                  disabled={gpsReplayBusy}
+                  className={
+                    gpsReplayBusy
+                      ? 'w-full h-8 px-3 text-xs rounded-md bg-zinc-200 text-zinc-500 dark:bg-zinc-700 dark:text-zinc-400 flex items-center justify-center cursor-not-allowed'
+                      : 'w-full h-8 px-3 text-xs rounded-md bg-amber-500 text-white font-semibold flex items-center justify-center'
+                  }
+                  title="Importer un log NDJSON et exporter la projection GPS→PK (mode test)"
+                >
+                  {gpsReplayBusy ? 'Replay GPS…' : 'Importer GPS (replay offline)'}
+                </button>
+              )}
+
+              {testModeEnabled && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    try {
+                      const kml = buildRibbonKml()
+                      downloadTextFile('ribbon_LAV050.kml', kml, 'application/vnd.google-earth.kml+xml')
+                      window.alert('KML ruban exporté : ribbon_LAV050.kml')
+                    } catch (err: any) {
+                      console.warn('[TitleBar] export KML failed', err)
+                      window.alert(`Export KML impossible: ${err?.message ?? String(err)}`)
+                    }
+                  }}
+                  className="w-full h-8 px-3 text-xs rounded-md bg-indigo-600 text-white font-semibold flex items-center justify-center"
+                  title="Exporter le ruban (KML) pour inspection dans Google Earth"
+                >
+                  Exporter KML ruban
+                </button>
+              )}
+
+              <div className="h-px bg-zinc-200/80 dark:bg-zinc-700/80 my-2" />
+
+
+
               {/* À propos */}
               <button
                 type="button"
@@ -1970,7 +2184,30 @@ onClick={async () => {
             onChange={onPickPdf}
             className="hidden"
           />
+
+          <input
+            ref={gpsReplayInputRef}
+            type="file"
+            accept=".log,.ndjson,application/json,text/plain"
+            onChange={async (e) => {
+              const f = e.target.files?.[0]
+              if (!f) return
+              await runGpsReplayFromNdjson(f)
+            }}
+            className="sr-only"
+            style={{
+              position: 'fixed',
+              left: 0,
+              top: 0,
+              width: 1,
+              height: 1,
+              opacity: 0,
+              pointerEvents: 'none',
+            }}
+          />
+
         </div>
+
       </div>
     </header>
   )

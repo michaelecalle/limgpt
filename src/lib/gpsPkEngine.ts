@@ -16,9 +16,11 @@ export type GpsPkProjection = {
       | "accepted"
       | "first_fix"
       | "no_candidate"
+      | "fallback_lastAccepted"
       | "rejected_jump"
       | "rejected_direction"
     // Mémoire avant décision (ce qu'on avait en dernier PK accepté)
+
     lastAcceptedPk?: number | null
     lastAcceptedAtMs?: number | null
     lastDirection?: 1 | -1 | null
@@ -56,8 +58,17 @@ const DIRECTION_CHANGE_THRESHOLD_KM = 0.3
 // Seuils simples (à ajuster après tests terrain)
 // - vitesse max "plausible" (km/h) pour borner un saut entre deux points GPS
 // - marge fixe (km) pour tolérer un peu de bruit
-const MAX_PLAUSIBLE_SPEED_KMH = 400
+const MAX_PLAUSIBLE_SPEED_KMH = 300
 const PK_JUMP_MARGIN_KM = 0.25
+
+// Fallback contrôlé : si pkCandidate est null mais qu'on est très proche du ruban,
+// on conserve le dernier PK accepté au lieu de produire pk=null.
+const MAX_DISTANCE_FOR_FALLBACK_M = 80
+
+// Extrapolation ultra limitée au-delà des ancres (km)
+// But : éviter pkCandidate=null quand le ruban dépasse légèrement la dernière ancre.
+const PK_FROM_S_EXTRAPOLATE_MARGIN_KM = 5
+
 
 
 // ancres triées par s_km croissant (une seule fois)
@@ -94,12 +105,36 @@ function pkFromS(s_km: number | null | undefined): number | null {
   const first = SORTED_ANCHORS[0]
   const last = SORTED_ANCHORS[SORTED_ANCHORS.length - 1]
 
-  // ✅ Hors domaine ancres => pas de PK (évite le "clip" qui fige à 752.4)
-  if (s_km < first.s_km || s_km > last.s_km) {
+  // ✅ Hors domaine ancres => pas de PK
+  // Exception : extrapolation ultra limitée au-delà de la dernière ancre,
+  // pour couvrir un ruban qui dépasse légèrement last.s_km.
+  if (s_km < first.s_km) {
+    return null
+  }
+
+  if (s_km > last.s_km) {
+    // Trop loin au-delà des ancres => on refuse (pas de PK inventé)
+    if (s_km > last.s_km + PK_FROM_S_EXTRAPOLATE_MARGIN_KM) {
+      return null
+    }
+
+    // Extrapolation linéaire basée sur le dernier segment "non plat"
+    // (on cherche depuis la fin un couple (a,b) avec b.s_km != a.s_km)
+    for (let i = SORTED_ANCHORS.length - 2; i >= 0; i--) {
+      const a = SORTED_ANCHORS[i]
+      const b = SORTED_ANCHORS[i + 1]
+      if (b.s_km === a.s_km) continue
+
+      const t = (s_km - a.s_km) / (b.s_km - a.s_km) // t > 1 possible (extrapolation)
+      return a.pk + t * (b.pk - a.pk)
+    }
+
+    // Si on n'a trouvé aucun segment exploitable
     return null
   }
 
   // Recherche du segment [i, i+1] qui encadre s_km
+
   for (let i = 0; i < SORTED_ANCHORS.length - 1; i++) {
     const a = SORTED_ANCHORS[i]
     const b = SORTED_ANCHORS[i + 1]
@@ -211,8 +246,22 @@ export function projectGpsToPk(lat: number, lon: number): GpsPkProjection | null
 
   if (pkCandidate == null || !Number.isFinite(pkCandidate)) {
     // Hors domaine ancres / pas exploitable
-    pk = null
-    decisionReason = "no_candidate"
+    // Fallback déterministe : si on est proche du ruban et qu'on a un dernier PK accepté,
+    // on conserve ce PK au lieu de produire pk=null.
+    if (
+      lastAcceptedPk &&
+      Number.isFinite(lastAcceptedPk.pk) &&
+      Number.isFinite(distance_m) &&
+      distance_m <= MAX_DISTANCE_FOR_FALLBACK_M
+    ) {
+      pk = lastAcceptedPk.pk
+      // on "rafraîchit" le timestamp pour éviter que dt explose ensuite
+      lastAcceptedPk = { pk: lastAcceptedPk.pk, atMs: nowMs }
+      decisionReason = "fallback_lastAccepted"
+    } else {
+      pk = null
+      decisionReason = "no_candidate"
+    }
   } else if (lastAcceptedPk && Number.isFinite(lastAcceptedPk.pk)) {
     dtMs = Math.max(1, nowMs - lastAcceptedPk.atMs)
     const dtH = dtMs / 3600000
@@ -223,6 +272,7 @@ export function projectGpsToPk(lat: number, lon: number): GpsPkProjection | null
 
     // direction du mouvement proposé
     dir = deltaPk >= 0 ? 1 : -1
+
 
     if (jumpKm > allowedJumpKm) {
       // GARDE-FOU #1 : saut trop grand → rejet
