@@ -157,6 +157,9 @@ export default function TitleBar() {
   const gpsReplayInputRef = useRef<HTMLInputElement>(null)
   const [gpsReplayBusy, setGpsReplayBusy] = useState(false)
 
+  // ✅ Progression (0..1) pour afficher une barre sur le bouton pendant le replay
+  const [gpsReplayProgress, setGpsReplayProgress] = useState(0)
+
   const downloadTextFile = (filename: string, content: string, mime = 'text/plain') => {
     const blob = new Blob([content], { type: mime })
     const url = URL.createObjectURL(blob)
@@ -227,6 +230,10 @@ ${coords}
   const runGpsReplayFromNdjson = async (file: File) => {
     try {
       setGpsReplayBusy(true)
+      setGpsReplayProgress(0)
+
+      // ✅ On évite de mélanger GPS live et replay
+      stopGpsWatch()
 
       // s’assure que le moteur est prêt (il est déjà init au boot, mais garde-fou)
       if (!gpsPkReady) {
@@ -236,18 +243,27 @@ ${coords}
       // ✅ Replay : repartir d’une mémoire PK propre (sinon dtMs est faux)
       resetGpsPkEngineMemory()
 
+      const parseTms = (t: any): number | null => {
+        if (typeof t === 'number' && Number.isFinite(t)) return Math.trunc(t)
+        if (typeof t === 'string' && t.trim().length > 0) {
+          const parsed = Date.parse(t)
+          if (Number.isFinite(parsed)) return parsed
+        }
+        return null
+      }
+
+      // ✅ Vitesse replay (1 = temps réel, 2 = 2x plus vite, etc.)
+      const SPEED = 60
+
       const text = await file.text()
       const lines = text.split(/\r?\n/)
 
-      const outLines: string[] = []
-      outLines.push('# LIM gps replay projection')
-      outLines.push(`# source=${file.name}`)
-      outLines.push(`# generatedAt=${new Date().toISOString()}`)
-      outLines.push('# format=one-JSON-per-line (NDJSON)')
-      outLines.push('# kind=gps:replay:projection')
-
-      let inCount = 0
-      let outCount = 0
+      // ---- 1) On extrait tous les points gps:position du log ----
+      const points: Array<{
+        tLogMs: number
+        tRaw: any
+        payload: any
+      }> = []
 
       for (const raw of lines) {
         const line = raw.trim()
@@ -261,60 +277,175 @@ ${coords}
         }
 
         if (obj?.kind !== 'gps:position') continue
-        const p = obj?.payload ?? {}
+        const tLogMs = parseTms(obj?.t)
+        if (tLogMs == null) continue
+
+        points.push({
+          tLogMs,
+          tRaw: obj?.t ?? null,
+          payload: obj?.payload ?? {},
+        })
+      }
+
+      if (points.length === 0) {
+        window.alert('Replay GPS: aucun événement kind:"gps:position" lisible dans ce fichier.')
+        return
+      }
+
+      // Tri sécurité
+      points.sort((a, b) => a.tLogMs - b.tLogMs)
+
+      // ---- 2) Horloge simulée : tLog → tSim (basé sur Date.now) ----
+      const t0Log = points[0].tLogMs
+      const t0Sim = Date.now()
+
+// 🔧 Horloge vue par FT = temps réel du log (non compressé)
+const toSimMs = (tLogMs: number) =>
+  Math.trunc(t0Sim + (tLogMs - t0Log))
+
+
+      // ---- 3) Export projection (comme avant) + injection timée dans FT ----
+      const outLines: string[] = []
+      outLines.push('# LIM gps replay projection')
+      outLines.push(`# source=${file.name}`)
+      outLines.push(`# generatedAt=${new Date().toISOString()}`)
+      outLines.push('# format=one-JSON-per-line (NDJSON)')
+      outLines.push('# kind=gps:replay:projection')
+
+      let inCount = 0
+      let outCount = 0
+
+      for (let i = 0; i < points.length; i++) {
+        const it = points[i]
+        const p = it.payload ?? {}
+
         const lat = p?.lat
         const lon = p?.lon
         const accuracy = p?.accuracy
-        const t = obj?.t
 
         if (typeof lat !== 'number' || typeof lon !== 'number') continue
         inCount++
 
-        // ✅ Horloge replay : on utilise le timestamp du log si possible
-        let nowMs: number | undefined = undefined
-        if (typeof t === 'number' && Number.isFinite(t)) {
-          nowMs = Math.trunc(t)
-        } else if (typeof t === 'string' && t.trim().length > 0) {
-          const parsed = Date.parse(t)
-          if (Number.isFinite(parsed)) nowMs = parsed
+        const simTs = toSimMs(it.tLogMs)
+
+        // ✅ Temporisation entre points (respect du timing du log, modulé par SPEED)
+        if (i > 0) {
+          const prevSimTs = toSimMs(points[i - 1].tLogMs)
+// 🔧 Accélération appliquée seulement à l’attente réelle
+const waitMs = Math.max(0, (simTs - prevSimTs) / Math.max(0.0001, SPEED))
+          if (waitMs > 0) {
+            await new Promise((r) => window.setTimeout(r, waitMs))
+          }
         }
 
-        const proj = projectGpsToPk(lat, lon, { nowMs })
+        // 1) Si le log contient déjà une projection (pk/s_km/distance/onLine…), on l’utilise.
+        // 2) Sinon, on calcule via gpsPkEngine avec nowMs=simTs.
+        let pk: number | null =
+          typeof p?.pk === 'number' && Number.isFinite(p.pk) ? p.pk : null
+        let s_km: number | null =
+          typeof p?.s_km === 'number' && Number.isFinite(p.s_km) ? p.s_km : null
+        let distance_m: number | null =
+          typeof p?.distance_m === 'number' && Number.isFinite(p.distance_m) ? p.distance_m : null
+        let onLine: boolean =
+          typeof p?.onLine === 'boolean' ? p.onLine : false
 
+        let nearestIdx: number | null =
+          typeof p?.nearestIdx === 'number' && Number.isFinite(p.nearestIdx) ? p.nearestIdx : null
+        let nearestLat: number | null =
+          typeof p?.nearestLat === 'number' && Number.isFinite(p.nearestLat) ? p.nearestLat : null
+        let nearestLon: number | null =
+          typeof p?.nearestLon === 'number' && Number.isFinite(p.nearestLon) ? p.nearestLon : null
 
-        // On sort un enregistrement “projection pure” (sans logique ORANGE/RED/etc.)
+        let pkCandidate: number | null =
+          typeof p?.pkCandidate === 'number' && Number.isFinite(p.pkCandidate) ? p.pkCandidate : null
+        let pkDecision: any = p?.pkDecision ?? null
+
+        let projOk = pk != null || s_km != null
+
+        if (pk == null && s_km == null && distance_m == null) {
+          const proj = projectGpsToPk(lat, lon, { nowMs: simTs })
+          projOk = !!proj
+
+          pk = proj?.pk ?? null
+          s_km = proj?.s_km ?? null
+          distance_m = proj?.distance_m ?? null
+
+          nearestIdx = proj?.nearestIdx ?? null
+          nearestLat = proj?.nearestLat ?? null
+          nearestLon = proj?.nearestLon ?? null
+
+          pkCandidate = proj?.pkCandidate ?? null
+          pkDecision = proj?.pkDecision ?? null
+
+          const dist = distance_m
+          onLine = dist != null && dist <= 200
+        }
+
+        // ✅ Injection dans FT : même event que le live
+        window.dispatchEvent(
+          new CustomEvent('gps:position', {
+            detail: {
+              lat,
+              lon,
+              accuracy: typeof accuracy === 'number' ? accuracy : undefined,
+              pk,
+              s_km,
+              distance_m,
+              onLine,
+              timestamp: simTs,
+
+              // DEBUG : point ruban retenu / décision PK
+              nearestIdx,
+              nearestLat,
+              nearestLon,
+              pkCandidate,
+              pkDecision,
+            },
+          })
+        )
+
+        // Export “projection pure” (comme avant)
         const record = {
-          t: t ?? null,
+          t: it.tRaw ?? null,
           kind: 'gps:replay:projection',
           payload: {
             lat,
             lon,
             accuracy: typeof accuracy === 'number' ? accuracy : null,
 
-            // sortie projection pure
-            projOk: !!proj,
-            pk: proj?.pk ?? null,
-            s_km: proj?.s_km ?? null,
-            distance_m: proj?.distance_m ?? null,
+            projOk,
+            pk,
+            s_km,
+            distance_m,
 
-            // debug utile si dispo
-            nearestIdx: proj?.nearestIdx ?? null,
-            nearestLat: proj?.nearestLat ?? null,
-            nearestLon: proj?.nearestLon ?? null,
-            pkCandidate: proj?.pkCandidate ?? null,
-            pkDecision: proj?.pkDecision ?? null,
+            nearestIdx,
+            nearestLat,
+            nearestLon,
+            pkCandidate,
+            pkDecision,
           },
         }
 
         outLines.push(JSON.stringify(record))
         outCount++
+
+        // ✅ Progression UI (throttle léger)
+        if (i % 20 === 0 || i === points.length - 1) {
+          setGpsReplayProgress((i + 1) / points.length)
+        }
       }
 
       outLines.push(`# stats_in=${inCount}`)
       outLines.push(`# stats_out=${outCount}`)
 
       downloadTextFile('gps_replay_projection.ndjson', outLines.join('\n'), 'application/x-ndjson')
-      window.alert(`Replay GPS terminé.\n\nPoints lus: ${inCount}\nPoints exportés: ${outCount}`)
+
+      window.alert(
+        `Replay GPS terminé.\n\n` +
+          `Points lus: ${inCount}\n` +
+          `Points injectés/exportés: ${outCount}\n\n` +
+          `Vitesse: x${SPEED}`
+      )
     } catch (err: any) {
       const msg = err?.message ?? String(err)
       const stack = err?.stack ? String(err.stack) : ''
@@ -324,16 +455,16 @@ ${coords}
         console.warn('[TitleBar] GPS replay stack:\n' + stack)
       }
 
-      // on affiche une version courte pour avoir le fichier/ligne sur iPad
       const stackLine = stack.split('\n').slice(0, 2).join('\n')
       window.alert(`Replay GPS impossible: ${msg}\n\n${stackLine}`)
     } finally {
+      setGpsReplayProgress(0)
       setGpsReplayBusy(false)
       // reset input pour permettre re-import même fichier
       if (gpsReplayInputRef.current) gpsReplayInputRef.current.value = ''
-      setGpsReplayBusy(false)
     }
   }
+
 
 
   const formatSignedHMS = (deltaSec: number): string => {
@@ -1168,11 +1299,32 @@ ${coords}
   // ✅ GPS (source de vérité FT) : la TitleBar affiche l'état calculé dans FT
   // En ORANGE : on affiche aussi le PK brut (pkRaw) si disponible, sinon on conserve l'affichage précédent.
   useEffect(() => {
+    // ✅ Compteur local (debug) pour réduire le volume : on logge 1 fois sur N en RED
+    let redSeq = 0
+
     const handler = (e: Event) => {
       const ce = e as CustomEvent
       const state = ce?.detail?.state as 'RED' | 'ORANGE' | 'GREEN' | undefined
       const pk = ce?.detail?.pk as number | null | undefined
       const pkRaw = ce?.detail?.pkRaw as number | null | undefined
+      const reasonCodes = ce?.detail?.reasonCodes as any
+
+      // ✅ Log rejouable : on capture les raisons de RED (sans spammer)
+      if (testModeEnabled && state === 'RED') {
+        redSeq++
+
+        // On logge 1 fois sur 10 (à ajuster si besoin)
+        if (redSeq % 10 === 1) {
+          logTestEvent('ui:gps-state:red', {
+            seq: redSeq,
+            state,
+            reasonCodes: Array.isArray(reasonCodes) ? reasonCodes : null,
+            pk: typeof pk === 'number' && Number.isFinite(pk) ? pk : null,
+            pkRaw: typeof pkRaw === 'number' && Number.isFinite(pkRaw) ? pkRaw : null,
+            tLocal: Date.now(),
+          })
+        }
+      }
 
       if (state === 'RED') {
         setGpsState(0)
@@ -1205,7 +1357,10 @@ ${coords}
     return () => {
       window.removeEventListener('lim:gps-state', handler as EventListener)
     }
+    // ✅ Important : on garde [] pour éviter de réinstaller le listener (et doubler les logs)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
 
 
 
@@ -2262,14 +2417,29 @@ onClick={async () => {
                   disabled={gpsReplayBusy}
                   className={
                     gpsReplayBusy
-                      ? 'w-full h-8 px-3 text-xs rounded-md bg-zinc-200 text-zinc-500 dark:bg-zinc-700 dark:text-zinc-400 flex items-center justify-center cursor-not-allowed'
+                      ? 'relative overflow-hidden w-full h-8 px-3 text-xs rounded-md bg-zinc-200 text-zinc-700 dark:bg-zinc-700 dark:text-zinc-100 flex items-center justify-center cursor-not-allowed'
                       : 'w-full h-8 px-3 text-xs rounded-md bg-amber-500 text-white font-semibold flex items-center justify-center'
                   }
                   title="Importer un log NDJSON et exporter la projection GPS→PK (mode test)"
                 >
-                  {gpsReplayBusy ? 'Replay GPS…' : 'Importer GPS (replay offline)'}
+                  {gpsReplayBusy && (
+                    <span
+                      aria-hidden
+                      className="absolute inset-0"
+                      style={{
+                        width: `${Math.max(0, Math.min(100, Math.round(gpsReplayProgress * 100)))}%`,
+                      }}
+                    >
+                      <span className="absolute inset-0 bg-amber-500/60" />
+                    </span>
+                  )}
+
+                  <span className="relative z-10">
+                    {gpsReplayBusy ? 'Replay GPS…' : 'Importer GPS (replay offline)'}
+                  </span>
                 </button>
               )}
+
 
               {testModeEnabled && (
                 <button
