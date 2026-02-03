@@ -51,6 +51,10 @@ let engineReady = false
 // ----- GARDE-FOU #1 : anti-saut PK (mémoire du dernier PK accepté) -----
 let lastAcceptedPk: { pk: number; atMs: number } | null = null
 
+// ===== Relock automatique après trop de rejected_jump =====
+let rejectStreakStartMs: number | null = null
+const RELOCK_AFTER_MS = 15000 // 15s de rejets continus => on accepte une nouvelle base
+
 // ===== direction attendue (source train ou override manuel) =====
 // +1 => PK croissants ; -1 => PK décroissants
 let expectedDirection: 1 | -1 | null = null
@@ -172,6 +176,7 @@ function attachExpectedDirectionListenerIfNeeded() {
     // Important : si contexte changé, on repart propre (évite mémoire d’un run précédent)
     if (changed) {
       lastAcceptedPk = null
+      rejectStreakStartMs = null
     }
   }
 
@@ -186,6 +191,24 @@ function attachExpectedDirectionListenerIfNeeded() {
  */
 export function resetGpsPkEngineMemory(): void {
   lastAcceptedPk = null
+  rejectStreakStartMs = null
+}
+
+/**
+ * En replay, on veut un comportement déterministe : le sens attendu est imposé
+ * (souvent dérivé du numéro de train/PDF) et ne dépend pas d'un "lastDirection".
+ */
+export function setExpectedDirectionForReplay(
+  dir: 1 | -1 | null,
+  meta?: { source?: string; train?: string }
+): void {
+  expectedDirection = dir
+  expectedDirectionSource = meta?.source ?? "replay"
+  expectedDirectionTrain = meta?.train ?? null
+
+  // Important : si on change le contexte, on repart propre pour éviter un "verrou" hérité.
+  lastAcceptedPk = null
+  rejectStreakStartMs = null
 }
 
 /**
@@ -196,6 +219,8 @@ export async function initGpsPkEngine(): Promise<void> {
   engineReady = true
 
   lastAcceptedPk = null
+  rejectStreakStartMs = null
+
   expectedDirection = null
   expectedDirectionTrain = null
   expectedDirectionSource = null
@@ -221,7 +246,11 @@ type ProjectOptions = {
 /**
  * Projection d’un point (lat, lon) sur la ligne de référence.
  */
-export function projectGpsToPk(lat: number, lon: number, options?: ProjectOptions): GpsPkProjection | null {
+export function projectGpsToPk(
+  lat: number,
+  lon: number,
+  options?: ProjectOptions
+): GpsPkProjection | null {
   if (!engineReady) {
     return null
   }
@@ -286,7 +315,11 @@ export function projectGpsToPk(lat: number, lon: number, options?: ProjectOption
   let jumpKm: number | null = null
   let dir: 1 | -1 | null = null
 
+  // ===== 1) Pas de candidate exploitable =====
   if (pkCandidate == null || !Number.isFinite(pkCandidate)) {
+    // candidate impossible -> on reset la streak de rejected_jump (ce n'est pas un "jump")
+    rejectStreakStartMs = null
+
     if (
       lastAcceptedPk &&
       Number.isFinite(lastAcceptedPk.pk) &&
@@ -300,7 +333,9 @@ export function projectGpsToPk(lat: number, lon: number, options?: ProjectOption
       pk = null
       decisionReason = "no_candidate"
     }
-  } else if (lastAcceptedPk && Number.isFinite(lastAcceptedPk.pk)) {
+  }
+  // ===== 2) On a une mémoire lastAcceptedPk -> on applique garde-fous =====
+  else if (lastAcceptedPk && Number.isFinite(lastAcceptedPk.pk)) {
     dtMs = Math.max(1, nowMs - lastAcceptedPk.atMs)
     const dtH = dtMs / 3600000
     allowedJumpKm = MAX_PLAUSIBLE_SPEED_KMH * dtH + PK_JUMP_MARGIN_KM
@@ -311,17 +346,45 @@ export function projectGpsToPk(lat: number, lon: number, options?: ProjectOption
     // direction du mouvement proposé (GPS observé)
     dir = deltaPk >= 0 ? 1 : -1
 
+    // --- garde-fou saut ---
     if (jumpKm > allowedJumpKm) {
-      pk = lastAcceptedPk.pk
-      decisionReason = "rejected_jump"
+      // Début ou poursuite d'une série de rejets
+      if (rejectStreakStartMs == null) {
+        rejectStreakStartMs = nowMs
+      }
+
+      const rejectElapsed = nowMs - rejectStreakStartMs
+
+      if (rejectElapsed >= RELOCK_AFTER_MS) {
+        // ✅ Relock : on accepte le PK malgré le saut
+        pk = pkCandidate
+        lastAcceptedPk = { pk: pkCandidate, atMs: nowMs }
+        decisionReason = "accepted"
+
+        // reset streak
+        rejectStreakStartMs = null
+      } else {
+        // rejet normal
+        pk = lastAcceptedPk.pk
+        decisionReason = "rejected_jump"
+      }
     } else {
-      // ✅ direction attendue FIXE (train/manuel)
+      // saut acceptable -> reset streak
+      rejectStreakStartMs = null
+
+      // --- garde-fou direction attendue ---
       if (
         expectedDirection != null &&
         dir !== expectedDirection &&
         jumpKm >= DIRECTION_CHANGE_THRESHOLD_KM
       ) {
         pk = lastAcceptedPk.pk
+
+        // ✅ IMPORTANT : on rafraîchit le timestamp même en rejet direction
+        // Sinon dtMs gonfle, allowedJumpKm devient énorme, et le relock (basé sur rejected_jump)
+        // ne peut plus jamais se déclencher.
+        lastAcceptedPk = { pk: lastAcceptedPk.pk, atMs: nowMs }
+
         decisionReason = "rejected_direction"
       } else {
         pk = pkCandidate
@@ -329,8 +392,10 @@ export function projectGpsToPk(lat: number, lon: number, options?: ProjectOption
         decisionReason = "accepted"
       }
     }
-  } else {
-    // Premier PK valide : initialise la mémoire
+  }
+  // ===== 3) Premier PK valide : initialise la mémoire =====
+  else {
+    rejectStreakStartMs = null
     lastAcceptedPk = { pk: pkCandidate, atMs: nowMs }
     pk = pkCandidate
     decisionReason = "first_fix"

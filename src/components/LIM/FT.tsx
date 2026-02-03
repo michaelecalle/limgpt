@@ -2320,7 +2320,8 @@ const computeFixedDelay = (now: Date, ftMinutes: number) => {
       // ✅ on mémorise l'état précédent pour détecter "entrée en RED"
       const prevGpsState = gpsStateRef.current;
 
-      // PK incohérent (garde-fou) => on force RED pour bascule immédiate en horaire
+      // PK incohérent (garde-fou) => on force ORANGE (et PAS RED)
+      // Objectif : éviter le rouge à chaque tunnel ; on garde le GPS "présent mais douteux"
       const pkIncoherentNow = pkJumpSuspect || pkJumpGuardActiveRef.current;
       if (pkIncoherentNow) {
         if (!reasonCodes.includes("pk_incoherent")) {
@@ -2329,14 +2330,15 @@ const computeFixedDelay = (now: Date, ftMinutes: number) => {
       }
 
       let nextState: "RED" | "ORANGE" | "GREEN" = "RED";
+
       if (!hasGpsFix) {
         nextState = "RED";
-      } else if (pkIncoherentNow) {
-        // ✅ Nouveau : PK incohérent => RED (pas ORANGE) pour éviter un saut en scroll GPS
-        nextState = "RED";
       } else if (pkFrozenRed) {
-        // GPS figé trop longtemps => "RED"
+        // GPS figé trop longtemps => RED
         nextState = "RED";
+      } else if (pkIncoherentNow) {
+        // ✅ PK incohérent => ORANGE (pas RED)
+        nextState = "ORANGE";
       } else if (!onLine || isStale || pkFrozenOrange) {
         nextState = "ORANGE";
       } else {
@@ -2347,9 +2349,10 @@ const computeFixedDelay = (now: Date, ftMinutes: number) => {
       const enteredRedFromFreeze =
         prevGpsState !== "RED" && nextState === "RED" && pkFrozenRed === true;
 
-      // ✅ nouveau : vrai uniquement AU MOMENT où PK incohérent force RED
-      const enteredRedFromPkIncoherent =
-        prevGpsState !== "RED" && nextState === "RED" && pkIncoherentNow === true;
+      // ✅ utile pour log : entrée ORANGE provoquée par PK incohérent
+      const enteredOrangeFromPkIncoherent =
+        prevGpsState !== "ORANGE" && nextState === "ORANGE" && pkIncoherentNow === true;
+
 
       const emitGpsStateToTitleBar = (forced: boolean) => {
         // throttle léger pour éviter le spam si watchPosition "mitraille"

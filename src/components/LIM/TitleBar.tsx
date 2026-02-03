@@ -9,7 +9,12 @@ import {
   logTestEvent,
 } from '../../lib/testLogger'
 
-import { initGpsPkEngine, projectGpsToPk, resetGpsPkEngineMemory } from '../../lib/gpsPkEngine'
+import {
+  initGpsPkEngine,
+  projectGpsToPk,
+  resetGpsPkEngineMemory,
+  setExpectedDirectionForReplay,
+} from '../../lib/gpsPkEngine'
 import { RIBBON_POINTS } from '../../lib/ligne050_ribbon_dense'
 
 
@@ -243,6 +248,16 @@ ${coords}
       // ✅ Replay : repartir d’une mémoire PK propre (sinon dtMs est faux)
       resetGpsPkEngineMemory()
 
+      // ✅ IMPORTANT : en replay, on impose le sens attendu au moteur (déterministe)
+      // DOWN => PK décroissants => -1 ; UP => PK croissants => +1
+      const dirForEngine: 1 | -1 | null =
+        expectedDir === 'DOWN' ? -1 : expectedDir === 'UP' ? 1 : null
+
+      setExpectedDirectionForReplay(dirForEngine, {
+        source: 'replay_lock',
+        train: trainDisplay ?? null,
+      })
+
       const parseTms = (t: any): number | null => {
         if (typeof t === 'number' && Number.isFinite(t)) return Math.trunc(t)
         if (typeof t === 'string' && t.trim().length > 0) {
@@ -360,26 +375,25 @@ const waitMs = Math.max(0, (simTs - prevSimTs) / Math.max(0.0001, SPEED))
           typeof p?.pkCandidate === 'number' && Number.isFinite(p.pkCandidate) ? p.pkCandidate : null
         let pkDecision: any = p?.pkDecision ?? null
 
-        let projOk = pk != null || s_km != null
+        // En replay, on veut tester le moteur actuel => on recalcule systématiquement.
+        let projOk = false
 
-        if (pk == null && s_km == null && distance_m == null) {
-          const proj = projectGpsToPk(lat, lon, { nowMs: simTs })
-          projOk = !!proj
+        const proj = projectGpsToPk(lat, lon, { nowMs: simTs })
+        projOk = !!proj
 
-          pk = proj?.pk ?? null
-          s_km = proj?.s_km ?? null
-          distance_m = proj?.distance_m ?? null
+        pk = proj?.pk ?? null
+        s_km = proj?.s_km ?? null
+        distance_m = proj?.distance_m ?? null
 
-          nearestIdx = proj?.nearestIdx ?? null
-          nearestLat = proj?.nearestLat ?? null
-          nearestLon = proj?.nearestLon ?? null
+        nearestIdx = proj?.nearestIdx ?? null
+        nearestLat = proj?.nearestLat ?? null
+        nearestLon = proj?.nearestLon ?? null
 
-          pkCandidate = proj?.pkCandidate ?? null
-          pkDecision = proj?.pkDecision ?? null
+        pkCandidate = proj?.pkCandidate ?? null
+        pkDecision = proj?.pkDecision ?? null
 
-          const dist = distance_m
-          onLine = dist != null && dist <= 200
-        }
+        const dist = distance_m
+        onLine = dist != null && dist <= 200
 
         // ✅ Injection dans FT : même event que le live
         window.dispatchEvent(
