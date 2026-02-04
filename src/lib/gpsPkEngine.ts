@@ -20,6 +20,12 @@ export type GpsPkProjection = {
       | "rejected_jump"
       | "rejected_direction"
 
+    // ✅ DEBUG : permet de distinguer un accepted "normal" d'un accepted "relock"
+    acceptedMode?: "normal" | "relock"
+
+    // ✅ DEBUG : continuité ruban (écart en indices entre lastAcceptedIdx et idx retenu)
+    deltaIdx?: number | null
+
     // Mémoire avant décision (ce qu'on avait en dernier PK accepté)
     lastAcceptedPk?: number | null
     lastAcceptedAtMs?: number | null
@@ -51,6 +57,10 @@ let engineReady = false
 // ----- GARDE-FOU #1 : anti-saut PK (mémoire du dernier PK accepté) -----
 let lastAcceptedPk: { pk: number; atMs: number } | null = null
 
+// ✅ Mémoire du dernier point ruban associé au dernier PK accepté
+// Sert au filtrage de continuité (évite les bascules de branche)
+let lastAcceptedIdx: number | null = null
+
 // ===== Relock automatique après trop de rejected_jump =====
 let rejectStreakStartMs: number | null = null
 const RELOCK_AFTER_MS = 15000 // 15s de rejets continus => on accepte une nouvelle base
@@ -68,6 +78,30 @@ const DIRECTION_CHANGE_THRESHOLD_KM = 0.3
 // Seuils simples (à ajuster après tests terrain)
 const MAX_PLAUSIBLE_SPEED_KMH = 300
 const PK_JUMP_MARGIN_KM = 0.25
+
+// ✅ Anti-"reset temps" sur fixes immobiles : si le PK ne bouge pas vraiment,
+// on évite de rafraîchir lastAcceptedPk.atMs (sinon dtMs redevient minuscule).
+// 0.05 km = 50 m (ruban densifié à 25 m => bon compromis pour filtrer le bruit)
+const TIME_RESET_EPS_KM = 0.05
+
+// ✅ Anti-rejets "à quelques mètres" (ruban densifié ~25 m)
+// On quantifie au pas du ruban pour stabiliser la comparaison jump vs seuil.
+const JUMP_COMPARE_QUANTUM_KM = 0.025 // 25 m
+
+function shouldRefreshAcceptedTimestamp(prevPk: number, nextPk: number): boolean {
+  if (!Number.isFinite(prevPk) || !Number.isFinite(nextPk)) return true
+  return Math.abs(nextPk - prevPk) >= TIME_RESET_EPS_KM
+}
+
+function ceilToQuantumKm(vKm: number, quantumKm: number): number {
+  if (!Number.isFinite(vKm) || !Number.isFinite(quantumKm) || quantumKm <= 0) return vKm
+  return Math.ceil(vKm / quantumKm) * quantumKm
+}
+
+function floorToQuantumKm(vKm: number, quantumKm: number): number {
+  if (!Number.isFinite(vKm) || !Number.isFinite(quantumKm) || quantumKm <= 0) return vKm
+  return Math.floor(vKm / quantumKm) * quantumKm
+}
 
 // Fallback contrôlé : si pkCandidate est null mais qu'on est très proche du ruban,
 // on conserve le dernier PK accepté au lieu de produire pk=null.
@@ -176,6 +210,7 @@ function attachExpectedDirectionListenerIfNeeded() {
     // Important : si contexte changé, on repart propre (évite mémoire d’un run précédent)
     if (changed) {
       lastAcceptedPk = null
+      lastAcceptedIdx = null
       rejectStreakStartMs = null
     }
   }
@@ -191,6 +226,7 @@ function attachExpectedDirectionListenerIfNeeded() {
  */
 export function resetGpsPkEngineMemory(): void {
   lastAcceptedPk = null
+  lastAcceptedIdx = null
   rejectStreakStartMs = null
 }
 
@@ -208,6 +244,7 @@ export function setExpectedDirectionForReplay(
 
   // Important : si on change le contexte, on repart propre pour éviter un "verrou" hérité.
   lastAcceptedPk = null
+  lastAcceptedIdx = null
   rejectStreakStartMs = null
 }
 
@@ -219,6 +256,7 @@ export async function initGpsPkEngine(): Promise<void> {
   engineReady = true
 
   lastAcceptedPk = null
+  lastAcceptedIdx = null
   rejectStreakStartMs = null
 
   expectedDirection = null
@@ -266,21 +304,171 @@ export function projectGpsToPk(
     return null
   }
 
-  let bestIdx = -1
-  let bestDist = Number.POSITIVE_INFINITY
+  // ===== Filtrage candidats (K plus proches, puis continuité idx) =====
+  const K_NEAREST = 10
+  const MAX_CANDIDATE_DISTANCE_M = 120
+
+  // Continuité : forte en mode normal, assouplie en "relock"
+  // (relock = série de rejected_jump en cours OU fix ancien)
+  const IDX_MAX_NORMAL = 120 // ~3 km (25 m * 120)
+  const IDX_MAX_RELOCK = 600 // ~15 km (25 m * 600)
+  const IDX_PENALTY_M = 1.5 // pénalité douce (le gros tri est fait par IDX_MAX)
+
+  const nowMs =
+    typeof options?.nowMs === "number" && Number.isFinite(options.nowMs)
+      ? Math.trunc(options.nowMs)
+      : Date.now()
+
+  const isRelockPhase =
+    rejectStreakStartMs != null ||
+    (lastAcceptedPk != null &&
+      Number.isFinite(lastAcceptedPk.atMs) &&
+      nowMs - lastAcceptedPk.atMs >= RELOCK_AFTER_MS)
+
+  const idxMax = isRelockPhase ? IDX_MAX_RELOCK : IDX_MAX_NORMAL
+
+  type Cand = { idx: number; d: number }
+  const bestK: Cand[] = []
+
+  // Insertions dans une liste triée (taille <= K_NEAREST)
+  const pushBestK = (c: Cand) => {
+    let pos = 0
+    while (pos < bestK.length && bestK[pos].d <= c.d) pos++
+    bestK.splice(pos, 0, c)
+    if (bestK.length > K_NEAREST) bestK.pop()
+  }
 
   for (let i = 0; i < RIBBON_POINTS.length; i++) {
     const p = RIBBON_POINTS[i]
     const d = haversineMeters(lat, lon, p.lat, p.lon)
-    if (d < bestDist) {
-      bestDist = d
-      bestIdx = i
+
+    // Si on a déjà K candidats meilleurs, on peut couper tôt sur les distances énormes
+    // (petit gain perf, sans changer le résultat)
+    if (bestK.length === K_NEAREST && d >= bestK[bestK.length - 1].d) continue
+
+    pushBestK({ idx: i, d })
+  }
+
+  if (bestK.length === 0) {
+    return null
+  }
+
+  // 1) Filtre distance <= 120m
+  const within = bestK.filter((c) => c.d <= MAX_CANDIDATE_DISTANCE_M)
+
+  // ✅ Spécification: on ne conserve QUE les candidats ≤ 120m.
+  // S'il n'y en a aucun, on se met en "no_candidate" (pkCandidate=null).
+  if (within.length === 0) {
+    const bestIdx = bestK[0].idx
+    const bestDist = bestK[0].d
+
+    const nearest = RIBBON_POINTS[bestIdx]
+    const s_km = nearest.s_km
+    const distance_m = bestDist
+    const pkCandidate = null
+
+    // ===== DEBUG : snapshot de la mémoire AVANT décision =====
+    const memLastPk = lastAcceptedPk?.pk ?? null
+    const memLastAt = lastAcceptedPk?.atMs ?? null
+    const memExpectedDir = expectedDirection ?? null
+    const memExpectedSource = expectedDirectionSource ?? null
+    const memExpectedTrain = expectedDirectionTrain ?? null
+
+    let pk = pkCandidate
+
+    let decisionReason:
+      | "accepted"
+      | "first_fix"
+      | "no_candidate"
+      | "fallback_lastAccepted"
+      | "rejected_jump"
+      | "rejected_direction" = "no_candidate"
+
+    // ✅ DEBUG : distinguera accepted normal vs relock
+    let acceptedMode: "normal" | "relock" | null = null
+
+    // ✅ DEBUG : delta idx (ici on connaît bestIdx, mais pas de candidate valide)
+    const deltaIdx =
+      lastAcceptedIdx != null && Number.isFinite(lastAcceptedIdx)
+        ? Math.abs(bestIdx - lastAcceptedIdx)
+        : null
+
+    let dtMs: number | null = null
+    let allowedJumpKm: number | null = null
+    let jumpKm: number | null = null
+    let dir: 1 | -1 | null = null
+
+    // ===== 1) Pas de candidate exploitable =====
+    // (on reprend ton bloc existant tel quel, sans toucher aux garde-fous)
+    if (
+      lastAcceptedPk &&
+      Number.isFinite(lastAcceptedPk.pk) &&
+      Number.isFinite(distance_m) &&
+      distance_m <= MAX_DISTANCE_FOR_FALLBACK_M
+    ) {
+      pk = lastAcceptedPk.pk
+      lastAcceptedPk = { pk: lastAcceptedPk.pk, atMs: lastAcceptedPk.atMs }
+      decisionReason = "fallback_lastAccepted"
+    } else {
+      pk = null
+      decisionReason = "no_candidate"
+    }
+
+    return {
+      pk,
+      s_km,
+      distance_m,
+
+      pkCandidate,
+      pkDecision: {
+        reason: decisionReason,
+        acceptedMode: acceptedMode ?? undefined,
+        deltaIdx,
+        lastAcceptedPk: memLastPk,
+        lastAcceptedAtMs: memLastAt,
+
+        expectedDirection: memExpectedDir,
+        expectedDirectionSource: memExpectedSource,
+        expectedDirectionTrain: memExpectedTrain,
+
+        dtMs,
+        allowedJumpKm,
+        jumpKm,
+        dir,
+      },
+
+      nearestIdx: bestIdx,
+      nearestLat: nearest.lat,
+      nearestLon: nearest.lon,
     }
   }
 
-  if (bestIdx < 0) {
-    return null
+  // 2) Filtre continuité idx (si on a une mémoire)
+  const candidates = within
+
+  let contCandidates = candidates
+  if (lastAcceptedIdx != null && Number.isFinite(lastAcceptedIdx)) {
+    const filtered = candidates.filter((c) => Math.abs(c.idx - lastAcceptedIdx!) <= idxMax)
+    if (filtered.length > 0) {
+      contCandidates = filtered
+    }
   }
+
+  // 3) Score final : distance + petite pénalité de delta idx
+  let chosen = contCandidates[0]
+  let bestScore = Number.POSITIVE_INFINITY
+
+  for (const c of contCandidates) {
+    const deltaIdxLocal = lastAcceptedIdx != null ? Math.abs(c.idx - lastAcceptedIdx) : 0
+    const score = c.d + deltaIdxLocal * IDX_PENALTY_M
+    if (score < bestScore) {
+      bestScore = score
+      chosen = c
+    }
+  }
+
+  const bestIdx = chosen.idx
+  const bestDist = chosen.d
 
   const nearest = RIBBON_POINTS[bestIdx]
   const s_km = nearest.s_km
@@ -294,11 +482,11 @@ export function projectGpsToPk(
   const memExpectedSource = expectedDirectionSource ?? null
   const memExpectedTrain = expectedDirectionTrain ?? null
 
-  // ✅ IMPORTANT : en replay, on doit utiliser le timestamp du log
-  const nowMs =
-    typeof options?.nowMs === "number" && Number.isFinite(options.nowMs)
-      ? Math.trunc(options.nowMs)
-      : Date.now()
+  // ✅ DEBUG : delta idx entre lastAcceptedIdx et bestIdx
+  const deltaIdx =
+    lastAcceptedIdx != null && Number.isFinite(lastAcceptedIdx)
+      ? Math.abs(bestIdx - lastAcceptedIdx)
+      : null
 
   let pk = pkCandidate
 
@@ -309,6 +497,9 @@ export function projectGpsToPk(
     | "fallback_lastAccepted"
     | "rejected_jump"
     | "rejected_direction" = "no_candidate"
+
+  // ✅ DEBUG : distinguera accepted normal vs relock
+  let acceptedMode: "normal" | "relock" | null = null
 
   let dtMs: number | null = null
   let allowedJumpKm: number | null = null
@@ -327,7 +518,10 @@ export function projectGpsToPk(
       distance_m <= MAX_DISTANCE_FOR_FALLBACK_M
     ) {
       pk = lastAcceptedPk.pk
-      lastAcceptedPk = { pk: lastAcceptedPk.pk, atMs: nowMs }
+      // ✅ On conserve atMs : fallback ne doit pas "consommer" le temps,
+      // sinon on crée des rejected_jump artificiels au fix suivant.
+      lastAcceptedPk = { pk: lastAcceptedPk.pk, atMs: lastAcceptedPk.atMs }
+      // idx inchangé (fallback = on n'a pas validé un nouveau point ruban)
       decisionReason = "fallback_lastAccepted"
     } else {
       pk = null
@@ -345,9 +539,15 @@ export function projectGpsToPk(
 
     // direction du mouvement proposé (GPS observé)
     dir = deltaPk >= 0 ? 1 : -1
-
     // --- garde-fou saut ---
-    if (jumpKm > allowedJumpKm) {
+    // ✅ Comparaison stabilisée au pas du ruban :
+    // - on "arrondit vers le haut" le jump (pire cas)
+    // - on "arrondit vers le bas" le seuil (pire cas)
+    // Puis on applique la comparaison sur ces valeurs quantifiées.
+    const jumpKmQ = ceilToQuantumKm(jumpKm, JUMP_COMPARE_QUANTUM_KM)
+    const allowedJumpKmQ = floorToQuantumKm(allowedJumpKm, JUMP_COMPARE_QUANTUM_KM)
+
+    if (jumpKmQ > allowedJumpKmQ) {
       // Début ou poursuite d'une série de rejets
       if (rejectStreakStartMs == null) {
         rejectStreakStartMs = nowMs
@@ -358,7 +558,10 @@ export function projectGpsToPk(
       if (rejectElapsed >= RELOCK_AFTER_MS) {
         // ✅ Relock : on accepte le PK malgré le saut
         pk = pkCandidate
+        acceptedMode = "relock"
+        // Relock = vrai mouvement (saut important) => on rafraîchit toujours le temps
         lastAcceptedPk = { pk: pkCandidate, atMs: nowMs }
+        lastAcceptedIdx = bestIdx
         decisionReason = "accepted"
 
         // reset streak
@@ -388,7 +591,15 @@ export function projectGpsToPk(
         decisionReason = "rejected_direction"
       } else {
         pk = pkCandidate
-        lastAcceptedPk = { pk: pkCandidate, atMs: nowMs }
+
+        const refreshAt = shouldRefreshAcceptedTimestamp(lastAcceptedPk.pk, pkCandidate)
+        lastAcceptedPk = {
+          pk: pkCandidate,
+          atMs: refreshAt ? nowMs : lastAcceptedPk.atMs,
+        }
+        lastAcceptedIdx = bestIdx
+
+        acceptedMode = "normal"
         decisionReason = "accepted"
       }
     }
@@ -397,7 +608,9 @@ export function projectGpsToPk(
   else {
     rejectStreakStartMs = null
     lastAcceptedPk = { pk: pkCandidate, atMs: nowMs }
+    lastAcceptedIdx = bestIdx
     pk = pkCandidate
+    acceptedMode = "normal"
     decisionReason = "first_fix"
   }
 
@@ -409,6 +622,8 @@ export function projectGpsToPk(
     pkCandidate,
     pkDecision: {
       reason: decisionReason,
+      acceptedMode: acceptedMode ?? undefined,
+      deltaIdx,
       lastAcceptedPk: memLastPk,
       lastAcceptedAtMs: memLastAt,
 
