@@ -70,6 +70,8 @@ import "./lib/redPdfParser"
 import "./lib/limParser"
 import "./lib/ftParser"
 import React from "react"
+import FTFrance from "./components/LIM/FTFrance"
+
 
 import TitleBar from "./components/LIM/TitleBar"
 import Infos from "./components/LIM/Infos"
@@ -171,6 +173,46 @@ export default function App() {
     ftViewMode === "FR" &&
     trainNumber !== null &&
     FT_FR_WHITELIST.has(trainNumber)
+
+  // ============================================================
+  // Mesure zone LTV/FT pour overlay "fixed" (iPad PWA safe)
+  // ============================================================
+  const ftAreaRef = React.useRef<HTMLDivElement | null>(null)
+  const [ftAreaRect, setFtAreaRect] = React.useState<{
+    top: number
+    left: number
+    width: number
+  } | null>(null)
+
+  React.useLayoutEffect(() => {
+    if (!showFtFranceOverlay) return
+
+    const measure = () => {
+      const el = ftAreaRef.current
+      if (!el) return
+      const r = el.getBoundingClientRect()
+      setFtAreaRect({ top: r.top, left: r.left, width: r.width })
+    }
+
+    measure()
+    const raf = window.requestAnimationFrame(measure)
+
+    window.addEventListener("resize", measure)
+    window.addEventListener("orientationchange", measure)
+
+    const vv = window.visualViewport
+    vv?.addEventListener("resize", measure)
+    vv?.addEventListener("scroll", measure)
+
+    return () => {
+      window.cancelAnimationFrame(raf)
+      window.removeEventListener("resize", measure)
+      window.removeEventListener("orientationchange", measure)
+      vv?.removeEventListener("resize", measure)
+      vv?.removeEventListener("scroll", measure)
+    }
+  }, [showFtFranceOverlay])
+
   // ✅ Sécurité (ceinture & bretelles) :
   // si train non éligible FT France => forcer ADIF (ES), même si un event UI tente FR/AUTO
   React.useEffect(() => {
@@ -187,6 +229,7 @@ export default function App() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [trainNumber])
+
 
   // ============================================================
   // REPLAY BOOTSTRAP (sans UI) — expose un player dans la console
@@ -351,7 +394,7 @@ export default function App() {
   }, [])
 
   return (
-    <main className="p-2 sm:p-4 h-screen flex flex-col">
+    <main className="p-2 sm:p-4 min-h-[100dvh] flex flex-col">
       {/* conteneur principal */}
       <div className="flex-1 min-h-0 flex flex-col">
         {/* Bandeau titre */}
@@ -480,7 +523,7 @@ export default function App() {
             </div>
 
             {/* Zone LTV + FT (overlay FT France possible) */}
-            <div className="mt-3 flex-1 min-h-0 relative flex flex-col">
+            <div ref={ftAreaRef} className="mt-3 flex-1 min-h-0 relative flex flex-col">
               {/* Bloc LTV */}
               <div className={foldInfosLtv ? "hidden" : "block"}>
                 <LTV />
@@ -497,14 +540,31 @@ export default function App() {
                 <FT />
               </div>
 
-              {/* Overlay FT France (opaque) */}
-              {showFtFranceOverlay && (
-                <div className="absolute inset-0 z-50 rounded-2xl bg-white dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 shadow-lg pointer-events-auto">
-                  <div className="h-full w-full p-4 flex items-center justify-center text-sm text-zinc-600 dark:text-zinc-300">
-                    FT France — placeholder (contenu fixe à venir)
+              {/* Overlay FT France (opaque) — fixé au viewport, top aligné sur la zone LTV/FT */}
+              {showFtFranceOverlay && ftAreaRect && (
+                <div
+                  className={
+                    "z-50 rounded-2xl border shadow-lg pointer-events-auto overflow-hidden " +
+                    (isDark
+                      ? "bg-zinc-950 border-zinc-800"
+                      : "bg-white border-zinc-200")
+                  }
+                  style={{
+                    position: "fixed",
+                    top: ftAreaRect.top,
+                    left: ftAreaRect.left,
+                    width: ftAreaRect.width,
+                    bottom: 0,
+                  }}
+                >
+                  <div className={"h-full w-full p-3 " + (isDark ? "bg-zinc-950" : "bg-white")}>
+                    <FTFrance trainNumber={trainNumber} />
                   </div>
                 </div>
               )}
+
+
+
             </div>
           </div>
         </div>
