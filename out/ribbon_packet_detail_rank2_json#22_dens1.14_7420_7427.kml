@@ -1,0 +1,321 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2">
+<Document>
+  <name>Ruban — détail rank2_json#22_dens1.14 — 7420→7427</name>
+
+  <Style id="packetLine">
+    <LineStyle><color>ff0000ff</color><width>5</width></LineStyle>
+  </Style>
+
+  <Style id="linkLine">
+    <LineStyle><color>ff00ffff</color><width>2</width></LineStyle>
+  </Style>
+
+  <Style id="ambPoint">
+    <IconStyle>
+      <color>ff00a5ff</color>
+      <scale>0.55</scale>
+      <Icon>
+        <href>http://maps.google.com/mapfiles/kml/shapes/placemark_circle.png</href>
+      </Icon>
+    </IconStyle>
+  </Style>
+
+  <Placemark>
+    <name>Segment ruban 7420→7427</name>
+    <description><![CDATA[idx: 7420 → 7427 (span=7)<br/>ambiguous: 8<br/>density≈1.14<br/>sampleHits: 23]]></description>
+    <styleUrl>#packetLine</styleUrl>
+    <LineString>
+      <tessellate>1</tessellate>
+      <coordinates>2.6550994,41.7576637,0 2.6552429,41.7578585,0 2.6553865,41.7580534,0 2.6555301,41.7582483,0 2.6556737,41.7584431,0 2.6558172,41.758638,0 2.6559608,41.7588328,0 2.6561044,41.7590277,0</coordinates>
+    </LineString>
+  </Placemark>
+
+  <Placemark>
+    <name>amb idx 7420</name>
+    <description><![CDATA[idx=7420<br/>s_km=175.393]]></description>
+    <styleUrl>#ambPoint</styleUrl>
+    <Point><coordinates>2.6550994,41.7576637,0</coordinates></Point>
+  </Placemark>
+
+  <Placemark>
+    <name>amb idx 7421</name>
+    <description><![CDATA[idx=7421<br/>s_km=175.418]]></description>
+    <styleUrl>#ambPoint</styleUrl>
+    <Point><coordinates>2.6552429,41.7578585,0</coordinates></Point>
+  </Placemark>
+
+  <Placemark>
+    <name>amb idx 7422</name>
+    <description><![CDATA[idx=7422<br/>s_km=175.443]]></description>
+    <styleUrl>#ambPoint</styleUrl>
+    <Point><coordinates>2.6553865,41.7580534,0</coordinates></Point>
+  </Placemark>
+
+  <Placemark>
+    <name>amb idx 7423</name>
+    <description><![CDATA[idx=7423<br/>s_km=175.468]]></description>
+    <styleUrl>#ambPoint</styleUrl>
+    <Point><coordinates>2.6555301,41.7582483,0</coordinates></Point>
+  </Placemark>
+
+  <Placemark>
+    <name>amb idx 7424</name>
+    <description><![CDATA[idx=7424<br/>s_km=175.493]]></description>
+    <styleUrl>#ambPoint</styleUrl>
+    <Point><coordinates>2.6556737,41.7584431,0</coordinates></Point>
+  </Placemark>
+
+  <Placemark>
+    <name>amb idx 7425</name>
+    <description><![CDATA[idx=7425<br/>s_km=175.518]]></description>
+    <styleUrl>#ambPoint</styleUrl>
+    <Point><coordinates>2.6558172,41.758638,0</coordinates></Point>
+  </Placemark>
+
+  <Placemark>
+    <name>amb idx 7426</name>
+    <description><![CDATA[idx=7426<br/>s_km=175.543]]></description>
+    <styleUrl>#ambPoint</styleUrl>
+    <Point><coordinates>2.6559608,41.7588328,0</coordinates></Point>
+  </Placemark>
+
+  <Placemark>
+    <name>amb idx 7427</name>
+    <description><![CDATA[idx=7427<br/>s_km=175.568]]></description>
+    <styleUrl>#ambPoint</styleUrl>
+    <Point><coordinates>2.6561044,41.7590277,0</coordinates></Point>
+  </Placemark>
+
+  <Placemark>
+    <name>link 1</name>
+    <description><![CDATA[i=7420, j=3163<br/>dist≈37.3m<br/>Δidx=4257]]></description>
+    <styleUrl>#linkLine</styleUrl>
+    <LineString>
+      <tessellate>1</tessellate>
+      <coordinates>2.6550994,41.7576637,0 2.654699,41.7578175,0</coordinates>
+    </LineString>
+  </Placemark>
+
+  <Placemark>
+    <name>link 2</name>
+    <description><![CDATA[i=7420, j=3164<br/>dist≈35.2m<br/>Δidx=4256]]></description>
+    <styleUrl>#linkLine</styleUrl>
+    <LineString>
+      <tessellate>1</tessellate>
+      <coordinates>2.6550994,41.7576637,0 2.6549314,41.7579537,0</coordinates>
+    </LineString>
+  </Placemark>
+
+  <Placemark>
+    <name>link 3</name>
+    <description><![CDATA[i=7421, j=3164<br/>dist≈27.9m<br/>Δidx=4257]]></description>
+    <styleUrl>#linkLine</styleUrl>
+    <LineString>
+      <tessellate>1</tessellate>
+      <coordinates>2.6552429,41.7578585,0 2.6549314,41.7579537,0</coordinates>
+    </LineString>
+  </Placemark>
+
+  <Placemark>
+    <name>link 4</name>
+    <description><![CDATA[i=7421, j=3165<br/>dist≈26.6m<br/>Δidx=4256]]></description>
+    <styleUrl>#linkLine</styleUrl>
+    <LineString>
+      <tessellate>1</tessellate>
+      <coordinates>2.6552429,41.7578585,0 2.6551637,41.7580899,0</coordinates>
+    </LineString>
+  </Placemark>
+
+  <Placemark>
+    <name>link 5</name>
+    <description><![CDATA[i=7422, j=3164<br/>dist≈39.3m<br/>Δidx=4258]]></description>
+    <styleUrl>#linkLine</styleUrl>
+    <LineString>
+      <tessellate>1</tessellate>
+      <coordinates>2.6553865,41.7580534,0 2.6549314,41.7579537,0</coordinates>
+    </LineString>
+  </Placemark>
+
+  <Placemark>
+    <name>link 6</name>
+    <description><![CDATA[i=7422, j=3165<br/>dist≈18.9m<br/>Δidx=4257]]></description>
+    <styleUrl>#linkLine</styleUrl>
+    <LineString>
+      <tessellate>1</tessellate>
+      <coordinates>2.6553865,41.7580534,0 2.6551637,41.7580899,0</coordinates>
+    </LineString>
+  </Placemark>
+
+  <Placemark>
+    <name>link 7</name>
+    <description><![CDATA[i=7422, j=3166<br/>dist≈19.2m<br/>Δidx=4256]]></description>
+    <styleUrl>#linkLine</styleUrl>
+    <LineString>
+      <tessellate>1</tessellate>
+      <coordinates>2.6553865,41.7580534,0 2.6553961,41.7582261,0</coordinates>
+    </LineString>
+  </Placemark>
+
+  <Placemark>
+    <name>link 8</name>
+    <description><![CDATA[i=7422, j=3167<br/>dist≈39.8m<br/>Δidx=4255]]></description>
+    <styleUrl>#linkLine</styleUrl>
+    <LineString>
+      <tessellate>1</tessellate>
+      <coordinates>2.6553865,41.7580534,0 2.6556284,41.7583623,0</coordinates>
+    </LineString>
+  </Placemark>
+
+  <Placemark>
+    <name>link 9</name>
+    <description><![CDATA[i=7423, j=3165<br/>dist≈35.1m<br/>Δidx=4258]]></description>
+    <styleUrl>#linkLine</styleUrl>
+    <LineString>
+      <tessellate>1</tessellate>
+      <coordinates>2.6555301,41.7582483,0 2.6551637,41.7580899,0</coordinates>
+    </LineString>
+  </Placemark>
+
+  <Placemark>
+    <name>link 10</name>
+    <description><![CDATA[i=7423, j=3166<br/>dist≈11.4m<br/>Δidx=4257]]></description>
+    <styleUrl>#linkLine</styleUrl>
+    <LineString>
+      <tessellate>1</tessellate>
+      <coordinates>2.6555301,41.7582483,0 2.6553961,41.7582261,0</coordinates>
+    </LineString>
+  </Placemark>
+
+  <Placemark>
+    <name>link 11</name>
+    <description><![CDATA[i=7423, j=3167<br/>dist≈15.1m<br/>Δidx=4256]]></description>
+    <styleUrl>#linkLine</styleUrl>
+    <LineString>
+      <tessellate>1</tessellate>
+      <coordinates>2.6555301,41.7582483,0 2.6556284,41.7583623,0</coordinates>
+    </LineString>
+  </Placemark>
+
+  <Placemark>
+    <name>link 12</name>
+    <description><![CDATA[i=7423, j=3168<br/>dist≈39.1m<br/>Δidx=4255]]></description>
+    <styleUrl>#linkLine</styleUrl>
+    <LineString>
+      <tessellate>1</tessellate>
+      <coordinates>2.6555301,41.7582483,0 2.6558607,41.7584985,0</coordinates>
+    </LineString>
+  </Placemark>
+
+  <Placemark>
+    <name>link 13</name>
+    <description><![CDATA[i=7424, j=3166<br/>dist≈33.4m<br/>Δidx=4258]]></description>
+    <styleUrl>#linkLine</styleUrl>
+    <LineString>
+      <tessellate>1</tessellate>
+      <coordinates>2.6556737,41.7584431,0 2.6553961,41.7582261,0</coordinates>
+    </LineString>
+  </Placemark>
+
+  <Placemark>
+    <name>link 14</name>
+    <description><![CDATA[i=7424, j=3167<br/>dist≈9.7m<br/>Δidx=4257]]></description>
+    <styleUrl>#linkLine</styleUrl>
+    <LineString>
+      <tessellate>1</tessellate>
+      <coordinates>2.6556737,41.7584431,0 2.6556284,41.7583623,0</coordinates>
+    </LineString>
+  </Placemark>
+
+  <Placemark>
+    <name>link 15</name>
+    <description><![CDATA[i=7424, j=3168<br/>dist≈16.7m<br/>Δidx=4256]]></description>
+    <styleUrl>#linkLine</styleUrl>
+    <LineString>
+      <tessellate>1</tessellate>
+      <coordinates>2.6556737,41.7584431,0 2.6558607,41.7584985,0</coordinates>
+    </LineString>
+  </Placemark>
+
+  <Placemark>
+    <name>link 16</name>
+    <description><![CDATA[i=7425, j=3167<br/>dist≈34.4m<br/>Δidx=4258]]></description>
+    <styleUrl>#linkLine</styleUrl>
+    <LineString>
+      <tessellate>1</tessellate>
+      <coordinates>2.6558172,41.758638,0 2.6556284,41.7583623,0</coordinates>
+    </LineString>
+  </Placemark>
+
+  <Placemark>
+    <name>link 17</name>
+    <description><![CDATA[i=7425, j=3168<br/>dist≈15.9m<br/>Δidx=4257]]></description>
+    <styleUrl>#linkLine</styleUrl>
+    <LineString>
+      <tessellate>1</tessellate>
+      <coordinates>2.6558172,41.758638,0 2.6558607,41.7584985,0</coordinates>
+    </LineString>
+  </Placemark>
+
+  <Placemark>
+    <name>link 18</name>
+    <description><![CDATA[i=7425, j=3169<br/>dist≈22.9m<br/>Δidx=4256]]></description>
+    <styleUrl>#linkLine</styleUrl>
+    <LineString>
+      <tessellate>1</tessellate>
+      <coordinates>2.6558172,41.758638,0 2.6560931,41.7586347,0</coordinates>
+    </LineString>
+  </Placemark>
+
+  <Placemark>
+    <name>link 19</name>
+    <description><![CDATA[i=7426, j=3168<br/>dist≈38.1m<br/>Δidx=4258]]></description>
+    <styleUrl>#linkLine</styleUrl>
+    <LineString>
+      <tessellate>1</tessellate>
+      <coordinates>2.6559608,41.7588328,0 2.6558607,41.7584985,0</coordinates>
+    </LineString>
+  </Placemark>
+
+  <Placemark>
+    <name>link 20</name>
+    <description><![CDATA[i=7426, j=3169<br/>dist≈24.6m<br/>Δidx=4257]]></description>
+    <styleUrl>#linkLine</styleUrl>
+    <LineString>
+      <tessellate>1</tessellate>
+      <coordinates>2.6559608,41.7588328,0 2.6560931,41.7586347,0</coordinates>
+    </LineString>
+  </Placemark>
+
+  <Placemark>
+    <name>link 21</name>
+    <description><![CDATA[i=7426, j=3170<br/>dist≈31.0m<br/>Δidx=4256]]></description>
+    <styleUrl>#linkLine</styleUrl>
+    <LineString>
+      <tessellate>1</tessellate>
+      <coordinates>2.6559608,41.7588328,0 2.6563254,41.7587709,0</coordinates>
+    </LineString>
+  </Placemark>
+
+  <Placemark>
+    <name>link 22</name>
+    <description><![CDATA[i=7427, j=3170<br/>dist≈34.0m<br/>Δidx=4257]]></description>
+    <styleUrl>#linkLine</styleUrl>
+    <LineString>
+      <tessellate>1</tessellate>
+      <coordinates>2.6561044,41.7590277,0 2.6563254,41.7587709,0</coordinates>
+    </LineString>
+  </Placemark>
+
+  <Placemark>
+    <name>link 23</name>
+    <description><![CDATA[i=7427, j=3171<br/>dist≈39.9m<br/>Δidx=4256]]></description>
+    <styleUrl>#linkLine</styleUrl>
+    <LineString>
+      <tessellate>1</tessellate>
+      <coordinates>2.6561044,41.7590277,0 2.6565578,41.7589071,0</coordinates>
+    </LineString>
+  </Placemark>
+
+</Document>
+</kml>

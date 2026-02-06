@@ -690,41 +690,27 @@ const waitMs = Math.max(0, (simTs - prevSimTs) / Math.max(0.0001, SPEED))
     }
   }, [])
 
-  const CHANGELOG_TEXT = `🆕 Changelog – dernières évolutions
+  const CHANGELOG_TEXT = `🆕 Changelog – Optimisation du moteur de localisation GPS
 
-🔧 Fiabilisation du suivi de position
-- Amélioration du suivi GPS avec projection PK plus robuste.
-- Gestion claire des états GPS : Vert / Orange / Rouge.
-- Conservation de la dernière position valide affichée en cas de perte temporaire du signal.
+🧭 Géométrie de ligne — ruban nettoyé et étendu
+- Nettoyage complet du ruban géographique : suppression des branches parasites OSM.
+- Recalage global de la géométrie pour obtenir une distance cohérente avec le terrain réel.
+- Extension du ruban vers le nord : intégration des portions LFP et RFN (préparation future).
 
-📍 Indicateur de position en temps réel
-- Ajout d’une barre de position dynamique dans la FT.
-- Se déplace progressivement en fonction du temps (mode horaire) ou du GPS.
-- Suit précisément les recalages manuels.
+📍 Ancres PK — correction et enrichissement
+- Repositionnement des ancres existantes pour correspondre au ruban nettoyé.
+- Ajout de nouvelles ancres sur les zones LFP et RFN (provisoires, validation terrain prévue).
+- Amélioration de la cohérence PK ↔ distance ruban sur l’ensemble de la ligne.
 
-⏱️ Mode horaire plus fiable
-- Utilisation exclusive des heures réelles de début et de fin de portion.
-- Les heures intermédiaires calculées (gris / italique) ne sont plus utilisées comme référence.
+🚆 Localisation GPS
+- Optimisation indirecte du moteur GPS grâce à une géométrie et des ancres plus fiables.
+- Réduction des bascules de branche et amélioration de la stabilité du PK estimé.
+- Meilleure continuité de localisation hors zones tunnel.
 
-📐 Correction d’un bug d’affichage sur iPad
-- Correction d’un problème où la FT ne prenait pas toute la hauteur lors du premier passage en mode plié.
-- Recalcul fiable de la hauteur disponible après pliage/dépliage et import.
-
-🔄 Mise à jour automatique de l’application
-- Détection d’une nouvelle version basée sur le build déployé.
-- Les utilisateurs ont toujours la dernière version après rechargement (PWA / Safari).
-- Ajout d’un toast non bloquant : “✅ LIM a été mise à jour”.
-
-🧩 Correction – Import PDF
-- Correction d’un bug dans le bouton Importer PDF.
-
-🏷️ Versionnage visible
-- Affichage clair de la version de l’application sur l’écran d’accueil (mode bleu).
-- Synchronisation fiable entre version locale et version déployée sur Vercel.
-
-ℹ️ À propos & changelog
-- Ajout d’une section “À propos” dans le menu Paramètres.
-- Affichage de la version et du changelog dans une fenêtre dédiée.`
+ℹ️ Note
+- Les nouvelles ancres LFP et RFN sont préparatoires pour une future extension de l’application.
+- Le fonctionnement actuel reste centré sur la portion ADIF.
+`
 
 
   // ✅ Ouverture du panneau "À propos" depuis ailleurs (ex: toast App)

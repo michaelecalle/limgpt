@@ -42,13 +42,39 @@
 // - Les lignes isNoteOnly reçoivent aussi rc et vmax cohérents avec leur zone,
 //   mais elles sont ignorées pour les calculs de timeline.
 
+export type FtNetwork = "RFN" | "LFP" | "ADIF";
+
 export interface FTEntry {
+  /**
+   * pk = repère "chaîne" historique de la FT (actuellement ADIF 615.9 → 752.4).
+   * On le conserve pour ne rien casser (tri, CSV_ZONES, timelines VMAX/RC, etc.).
+   */
   pk: string;
+
   dependencia: string;
+
+  // --- Multi-réseaux (préparation extension France) --------------------------
+  /**
+   * Réseau auquel appartient l’entrée (optionnel pour compatibilité).
+   * On le renseignera progressivement lors de l’ajout Perpignan → Limite.
+   */
+  network?: FtNetwork;
+
+  /**
+   * PK par réseau (format libre: "PK 123.4", "123.4", "KP 123+400", etc.)
+   * L’affichage décidera plus tard lequel montrer en colonne S.
+   */
+  pk_rfn?: string;
+  pk_lfp?: string;
+  pk_adif?: string;
+
+  // PK interne continu (utilisé pour calculs: timelines, zones CSV, position)
+  pk_internal?: number;
 
   // Remarques rouges
   note?: string;
   notes?: string[];
+
   isNoteOnly?: boolean;
 
   // Colonnes constantes
@@ -77,6 +103,7 @@ export interface FTEntry {
 // Une CSV est définie par :
 // - un sens (PAIR / IMPAIR)
 // - une plage kilométrique [pkFrom ; pkTo] dans le repère croissant du fichier
+
 //   (615.9 → 752.4)
 // - éventuellement un flag ignoreIfFirst pour les zones qu'on ne surligne pas
 //   si elles sont la première portion affichée sur la FT.
@@ -672,6 +699,11 @@ export const FT_LIGNE_PAIR: FTEntry[] = [
   {
     pk: "752.4",
     dependencia: "LIMITE ADIF - LFPSA",
+    network: "ADIF",
+    pk_adif: "752.4",
+    pk_lfp: "44.4",
+    pk_internal: 752.4,
+
     bloqueo: "↓ BCA ↓",
     radio: "◯ GSMR",
     rc: 18,
@@ -679,7 +711,58 @@ export const FT_LIGNE_PAIR: FTEntry[] = [
     vmax: 200,
     vmax_bar: false, // pas de barre en toute fin
   },
+  {
+    // PK interne continu (virtuel) : correspond au PK LFP 0.0
+    // (repère interne basé sur ADIF, en prenant l’ancre 752.4 ↔ LFP 44.4)
+    pk: "796.8",
+    dependencia: "LFP PK 0 (POINT TECHNIQUE)",
+    network: "LFP",
+    pk_lfp: "0.0",
+    pk_internal: 796.8,
+
+    // TODO: à affiner plus tard (vmax/rc/radio/bloqueo) pour la portion FR/LFP
+    bloqueo: "↓ BCA ↓",
+    radio: "◯ GSMR",
+    rc: 18,
+    rc_bar: false,
+    vmax: 200,
+    vmax_bar: false,
+  },
+
+  {
+    // Limite RFN ↔ LFP (PK RFN 473.300)
+    pk: "799.7",
+    dependencia: "LIMITE RFN - LFPSA",
+    network: "RFN",
+    pk_rfn: "473.300",
+    pk_internal: 799.7,
+
+    bloqueo: "↓ BCA ↓",
+    radio: "◯ GSMR",
+    rc: 18,
+    rc_bar: false,
+    vmax: 200,
+    vmax_bar: false,
+  },
+
+  {
+    // PERPIGNAN (PK RFN 467.500)
+    pk: "805.5",
+    dependencia: "PERPIGNAN",
+    network: "RFN",
+    pk_rfn: "467.500",
+    pk_internal: 805.5,
+
+    bloqueo: "↓ BCA ↓",
+    radio: "◯ GSMR",
+    rc: 18,
+    rc_bar: false,
+    vmax: 200,
+    vmax_bar: false,
+  },
+
 ];
+
 
 // -----------------------------------------------------------------------------
 // FT_LIGNE_IMPAIR : sens IMPAIR
@@ -1190,12 +1273,67 @@ export const FT_LIGNE_IMPAIR: FTEntry[] = [
   {
     pk: "752.4",
     dependencia: "LIMITE ADIF - LFPSA",
+    network: "ADIF",
+    pk_adif: "752.4",
+    pk_lfp: "44.4",
+    pk_internal: 752.4,
+
     bloqueo: "↓ BCA ↓",
     radio: "◯ GSMR",
     rc: 18,
     rc_bar: false,
-    // 752.4→716.8 = 200, extrémité : pas de barre
     vmax: 200,
     vmax_bar: false,
   },
+  {
+    // PK interne continu (virtuel) : correspond au PK LFP 0.0
+    // (repère interne basé sur ADIF, en prenant l’ancre 752.4 ↔ LFP 44.4)
+    pk: "796.8",
+    dependencia: "LFP PK 0 (POINT TECHNIQUE)",
+    network: "LFP",
+    pk_lfp: "0.0",
+    pk_internal: 796.8,
+
+    // TODO: à affiner plus tard (vmax/rc/radio/bloqueo) pour la portion FR/LFP
+    bloqueo: "↓ BCA ↓",
+    radio: "◯ GSMR",
+    rc: 18,
+    rc_bar: false,
+    vmax: 200,
+    vmax_bar: false,
+  },
+
+  {
+    // Limite RFN ↔ LFP (PK RFN 473.300)
+    pk: "799.7",
+    dependencia: "LIMITE RFN - LFPSA",
+    network: "RFN",
+    pk_rfn: "473.300",
+    pk_internal: 799.7,
+
+    bloqueo: "↓ BCA ↓",
+    radio: "◯ GSMR",
+    rc: 18,
+    rc_bar: false,
+    vmax: 200,
+    vmax_bar: false,
+  },
+
+  {
+    // PERPIGNAN (PK RFN 467.500)
+    pk: "805.5",
+    dependencia: "PERPIGNAN",
+    network: "RFN",
+    pk_rfn: "467.500",
+    pk_internal: 805.5,
+
+    bloqueo: "↓ BCA ↓",
+    radio: "◯ GSMR",
+    rc: 18,
+    rc_bar: false,
+    vmax: 200,
+    vmax_bar: false,
+  },
+
 ];
+
