@@ -6,12 +6,12 @@
   "background_color": "#ffffff",
   "theme_color": "#000000",
   "orientation": "landscape",
-"icons": [
-  {
-    "src": "/apple-touch-icon.png?v=2",
-    "sizes": "180x180",
-    "type": "image/png",
-    "purpose": "any"
-  }
-]
-
+  "icons": [
+    {
+      "src": "/apple-touch-icon.png?v=2",
+      "sizes": "180x180",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ]
+}

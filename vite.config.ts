@@ -28,8 +28,8 @@ export default defineConfig({
       registerType: 'autoUpdate',
       includeAssets: ['vite.svg'],
       manifest: {
-        name: 'LIMGPT',
-        short_name: 'LIMGPT',
+        name: 'LIM',
+        short_name: 'LIM',
         description: 'Affichage dynamique du LIM pour conducteurs TGV',
         theme_color: '#0f172a',
         background_color: '#0f172a',

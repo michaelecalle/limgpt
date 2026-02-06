@@ -61,6 +61,20 @@ export default function TitleBar() {
   )
   const [standbyMode, setStandbyMode] = useState(false)
   const [pdfMode, setPdfMode] = useState<'blue' | 'green' | 'red'>('blue')
+
+  // ----- FT VIEW MODE (ES / FR / AUTO) -----
+  // Option A : pas de persistance (ce n’est pas une préférence, c’est un état de travail)
+  // Par défaut : ADIF (ES)
+  const [ftViewMode, setFtViewMode] = useState<'AUTO' | 'ES' | 'FR'>('ES')
+
+  useEffect(() => {
+    window.dispatchEvent(
+      new CustomEvent('ft:view-mode-change', { detail: { mode: ftViewMode } })
+    )
+  }, [ftViewMode])
+
+
+
     // ----- TRAITEMENT PDF (spinner + garde-fou timeout) -----
   const [pdfProcessing, setPdfProcessing] = useState(false)
   const pdfProcessingTimerRef = useRef<number | null>(null)
@@ -558,6 +572,27 @@ const waitMs = Math.max(0, (simTs - prevSimTs) / Math.max(0.0001, SPEED))
     const raw = last?.trenPadded ?? last?.tren
     return toTitleNumber(raw)
   })
+  // ✅ Sécurité : si train non éligible FT France => forcer ADIF (ES)
+  useEffect(() => {
+    if (!trainDisplay) return
+
+    const n = parseInt(trainDisplay, 10)
+    if (!Number.isFinite(n)) return
+
+    const FT_FR_WHITELIST = new Set<number>([9712, 9714, 9707, 9709, 9705, 9710])
+    const isEligible = FT_FR_WHITELIST.has(n)
+
+    if (!isEligible && ftViewMode !== 'ES') {
+      setFtViewMode('ES')
+      logTestEvent('ui:ftViewMode:force', {
+        reason: 'train_not_eligible',
+        train: trainDisplay,
+        forcedMode: 'ES',
+        source: 'titlebar',
+      })
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [trainDisplay])
 
   const [trainType, setTrainType] = useState<string | undefined>(() => {
     const w = window as any
@@ -1926,37 +1961,41 @@ const waitMs = Math.max(0, (simTs - prevSimTs) / Math.max(0.0001, SPEED))
           )}
 
 
-          {/* Jour/Nuit */}
-          <div className="relative inline-flex select-none items-center rounded-xl border p-0.5 text-[11px] shadow-sm border-zinc-200 dark:border-zinc-700">
-            <span
-              className={`absolute inset-y-0.5 w-1/2 rounded-lg bg-zinc-200/70 dark:bg-zinc-700/80 transition-transform ${
-                dark ? 'translate-x-full' : 'translate-x-0'
-              }`}
-              aria-hidden
-            />
+          {/* Jour/Nuit (groupe collé, style cohérent) */}
+          <div
+            className="h-8 rounded-md overflow-hidden bg-zinc-200 dark:bg-zinc-700 flex"
+            title="Jour / Nuit"
+          >
             <button
               type="button"
-              className={`relative z-10 w-10 rounded-lg px-2.5 py-1 font-medium flex items-center justify-center ${
-                !dark ? 'text-zinc-900 dark:text-zinc-100' : 'opacity-75'
-              }`}
+              className={
+                "h-8 w-10 flex items-center justify-center " +
+                (!dark
+                  ? "bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100"
+                  : "text-zinc-900 dark:text-zinc-100 opacity-80")
+              }
               onClick={() => setDark(false)}
               aria-label="Mode jour"
-              title="Jour"
             >
               <IconSun />
             </button>
+
             <button
               type="button"
-              className={`relative z-10 w-10 rounded-lg px-2.5 py-1 font-medium flex items-center justify-center ${
-                dark ? 'text-zinc-900 dark:text-zinc-100' : 'opacity-75'
-              }`}
+              className={
+                "h-8 w-10 flex items-center justify-center " +
+                (dark
+                  ? "bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100"
+                  : "text-zinc-900 dark:text-zinc-100 opacity-80")
+              }
               onClick={() => setDark(true)}
               aria-label="Mode nuit"
-              title="Nuit"
             >
               <IconMoon />
             </button>
           </div>
+
+
 
 
           {/* Luminosité */}
@@ -2045,9 +2084,68 @@ const waitMs = Math.max(0, (simTs - prevSimTs) / Math.max(0.0001, SPEED))
             {pdfMode === 'green' && <span className="font-bold">NORMAL</span>}
             {pdfMode === 'red' && <span className="font-bold">SECOURS</span>}
           </button>
+{/* FT LFP / AUTO / ADIF (3 positions)
+    Option A : affiché UNIQUEMENT si train éligible (whitelist) */}
+{trainDisplay &&
+  (() => {
+    const n = parseInt(trainDisplay, 10)
+    if (!Number.isFinite(n)) return null
 
+    // ✅ Whitelist FT France (mêmes trains que dans App.tsx)
+    const FT_FR_WHITELIST = new Set<number>([9712, 9714, 9707, 9709, 9705, 9710])
+    const isEligible = FT_FR_WHITELIST.has(n)
 
-          {/* STOP (interruption du test) */}
+    // 🚫 Train non éligible => on ne montre RIEN (toggle inutile)
+    if (!isEligible) return null
+
+    const isEven = n % 2 === 0
+
+    // Pair  => LFP / AUTO / ADIF
+    // Impair => ADIF / AUTO / LFP
+    const order = isEven
+      ? (['FR', 'AUTO', 'ES'] as const)
+      : (['ES', 'AUTO', 'FR'] as const)
+
+    const labelOf = (mode: 'FR' | 'AUTO' | 'ES') =>
+      mode === 'FR' ? 'LFP' : mode === 'ES' ? 'ADIF' : 'AUTO'
+
+    return (
+      <div
+        className="h-8 rounded-md overflow-hidden bg-zinc-200 dark:bg-zinc-700 flex"
+        title="Choix FT : LFP / AUTO / ADIF"
+      >
+        {order.map((mode) => (
+          <button
+            key={mode}
+            type="button"
+            onClick={() => {
+              if (simulationEnabled) {
+                logTestEvent('ui:blocked', {
+                  control: 'ftViewMode',
+                  source: 'titlebar',
+                })
+                return
+              }
+              setFtViewMode(mode)
+              logTestEvent('ui:ftViewMode:change', {
+                mode,
+                source: 'titlebar',
+              })
+            }}
+            className={
+              'px-3 text-xs font-semibold ' +
+              (ftViewMode === mode
+                ? 'bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100'
+                : 'text-zinc-700 dark:text-zinc-200')
+            }
+          >
+            {labelOf(mode)}
+          </button>
+        ))}
+      </div>
+    )
+  })()}
+
           {testModeEnabled && (
             <button
               type="button"

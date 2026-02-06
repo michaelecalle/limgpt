@@ -127,8 +127,68 @@ export default function App() {
   const [rawPdfFile, setRawPdfFile] = React.useState<File | null>(null)
   const [pdfPageImages, setPdfPageImages] = React.useState<string[]>([])
 
+  // ============================================================
+  // FT VIEW MODE + OVERLAY FT FRANCE (opaque)
+  // ============================================================
+  type FtViewMode = "AUTO" | "ES" | "FR"
+  const [ftViewMode, setFtViewMode] = React.useState<FtViewMode>("ES")
+  const [trainNumber, setTrainNumber] = React.useState<number | null>(null)
 
-    // ============================================================
+  // Critère "FT France disponible" (déjà en place : whitelist par n° de train)
+  const FT_FR_WHITELIST = React.useMemo(
+    () => new Set<number>([9712, 9714, 9707, 9709, 9705, 9710]),
+    []
+  )
+
+  React.useEffect(() => {
+    const handler = (e: Event) => {
+      const ce = e as CustomEvent
+      const mode = ce?.detail?.mode
+      if (mode === "AUTO" || mode === "ES" || mode === "FR") setFtViewMode(mode)
+    }
+    window.addEventListener("ft:view-mode-change", handler as EventListener)
+    return () =>
+      window.removeEventListener("ft:view-mode-change", handler as EventListener)
+  }, [])
+
+  React.useEffect(() => {
+    const readTrain = (e: Event) => {
+      const ce = e as CustomEvent
+      const raw = ce?.detail?.trainNumber
+      const n = typeof raw === "number" ? raw : parseInt(String(raw ?? ""), 10)
+      if (!Number.isNaN(n)) setTrainNumber(n)
+    }
+
+    window.addEventListener("lim:train", readTrain as EventListener)
+    window.addEventListener("lim:train-change", readTrain as EventListener)
+    return () => {
+      window.removeEventListener("lim:train", readTrain as EventListener)
+      window.removeEventListener("lim:train-change", readTrain as EventListener)
+    }
+  }, [])
+
+  const showFtFranceOverlay =
+    ftViewMode === "FR" &&
+    trainNumber !== null &&
+    FT_FR_WHITELIST.has(trainNumber)
+  // ✅ Sécurité (ceinture & bretelles) :
+  // si train non éligible FT France => forcer ADIF (ES), même si un event UI tente FR/AUTO
+  React.useEffect(() => {
+    if (trainNumber === null) return
+
+    const isEligible = FT_FR_WHITELIST.has(trainNumber)
+
+    if (!isEligible && ftViewMode !== "ES") {
+      setFtViewMode("ES")
+      console.log("[App] FT view forced to ES (train not eligible)", {
+        trainNumber,
+        previous: ftViewMode,
+      })
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [trainNumber])
+
+  // ============================================================
   // REPLAY BOOTSTRAP (sans UI) — expose un player dans la console
   // ============================================================
   React.useEffect(() => {
@@ -167,7 +227,7 @@ export default function App() {
           status: () => player.getStatus(),
           cursor: () => player.getCursor(),
           durationMs: () => player.getDurationMs(),
-                    startIso: () => player.getStartIso?.() ?? null,
+          startIso: () => player.getStartIso?.() ?? null,
           nowIso: () => player.getNowIso?.() ?? null,
 
           error: () => player.getError?.() ?? null,
@@ -186,6 +246,7 @@ export default function App() {
       // on ne stoppe pas forcément le player ici ; dev-only
     }
   }, [])
+
 
 
   // réception du PDF
@@ -418,21 +479,33 @@ export default function App() {
               <Infos />
             </div>
 
-            {/* Bloc LTV */}
-            <div className="mt-3">
-              <LTV />
-            </div>
-          </div>
+            {/* Zone LTV + FT (overlay FT France possible) */}
+            <div className="mt-3 flex-1 min-h-0 relative flex flex-col">
+              {/* Bloc LTV */}
+              <div className={foldInfosLtv ? "hidden" : "block"}>
+                <LTV />
+              </div>
 
-          {/* Bloc FT */}
-          <div
-            className={
-              foldInfosLtv
-                ? "mt-3 flex-1 min-h-0 h-full"
-                : "mt-3 flex-1 min-h-0"
-            }
-          >
-            <FT />
+              {/* Bloc FT */}
+              <div
+                className={
+                  foldInfosLtv
+                    ? "mt-0 flex-1 min-h-0 h-full"
+                    : "mt-3 flex-1 min-h-0"
+                }
+              >
+                <FT />
+              </div>
+
+              {/* Overlay FT France (opaque) */}
+              {showFtFranceOverlay && (
+                <div className="absolute inset-0 z-50 rounded-2xl bg-white dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 shadow-lg pointer-events-auto">
+                  <div className="h-full w-full p-4 flex items-center justify-center text-sm text-zinc-600 dark:text-zinc-300">
+                    FT France — placeholder (contenu fixe à venir)
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
         </div>
       </div>

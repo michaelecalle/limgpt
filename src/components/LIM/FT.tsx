@@ -231,6 +231,41 @@ export default function FT({ variant = "classic" }: FTProps) {
   //
   const [trainNumber, setTrainNumber] = useState<number | null>(null);
 
+    // ===== FT VIEW MODE (alternance ES/FR, sans fusion) =====
+  type FtViewMode = "AUTO" | "ES" | "FR";
+  const [ftViewMode, setFtViewMode] = useState<FtViewMode>("AUTO");
+
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const ce = e as CustomEvent;
+      const mode = ce?.detail?.mode;
+      if (mode === "AUTO" || mode === "ES" || mode === "FR") {
+        setFtViewMode(mode);
+      }
+    };
+    window.addEventListener("ft:view-mode-change", handler as EventListener);
+    return () => {
+      window.removeEventListener("ft:view-mode-change", handler as EventListener);
+    };
+  }, []);
+
+  // Liste blanche : seuls ces trains peuvent afficher FT France (à terme)
+  const FT_FR_WHITELIST = useMemo(
+    () => new Set<number>([9712, 9714, 9707, 9709, 9705, 9710]),
+    []
+  );
+
+  // Pour cette étape : AUTO = ES par défaut (l’auto GPS viendra ensuite)
+  const effectiveFtView: "ES" | "FR" = useMemo(() => {
+    if (ftViewMode === "ES") return "ES";
+    if (ftViewMode === "FR") {
+      return trainNumber !== null && FT_FR_WHITELIST.has(trainNumber) ? "FR" : "ES";
+    }
+    // AUTO
+    return "ES";
+  }, [ftViewMode, trainNumber, FT_FR_WHITELIST]);
+
+
   const [routeStart, setRouteStart] = useState<string>("");
 
   const [routeEnd, setRouteEnd] = useState<string>("");
@@ -1641,6 +1676,24 @@ const computeFixedDelay = (now: Date, ftMinutes: number) => {
     if (isOdd === null) return null;
     return isOdd ? "IMPAIR" : "PAIR";
   }, [isOdd]);
+
+    // ===== Expose le contexte train à la TitleBar (sens + disponibilité FT France) =====
+  useEffect(() => {
+    if (trainNumber === null || isOdd === null || currentCsvSens === null) return;
+
+    // ⚠️ Ici, on suit la convention ACTUELLE de ton FT.tsx :
+    // isOdd === true  -> "IMPAIR (Espagne→France)" (cf tes logs)
+    // isOdd === false -> "PAIR  (France→Espagne)"
+    const direction: "FR_ES" | "ES_FR" = isOdd ? "ES_FR" : "FR_ES";
+
+    const hasFranceFt = FT_FR_WHITELIST.has(trainNumber);
+
+    window.dispatchEvent(
+      new CustomEvent("ft:train-context-change", {
+        detail: { trainNumber, direction, hasFranceFt, csvSens: currentCsvSens },
+      })
+    );
+  }, [trainNumber, isOdd, currentCsvSens, FT_FR_WHITELIST]);
 
   //
   // ===== 3. SÉLECTION + ORIENTATION + TRONQUAGE DU PARCOURS ===========
@@ -5003,12 +5056,26 @@ onClick={() => {
 
       <div className="ft-active-line" aria-hidden="true" />
 
+      {/* FT FR (alternatif) — placeholder pour cette étape */}
       <div
+        style={{ display: effectiveFtView === "FR" ? "block" : "none" }}
+        className="p-3"
+      >
+        <div className="text-sm font-semibold">FT France</div>
+        <div className="text-xs opacity-70">
+          Mode FR activé. (Table France Perpignan→Figueres à brancher ensuite.)
+        </div>
+      </div>
+
+      {/* FT ES (moteur existant, inchangé) */}
+      <div
+        style={{ display: effectiveFtView === "ES" ? "block" : "none" }}
         className={
           "ft-scroll-x " +
           (variant === "modern" ? "ft-modern-wrap" : "ft-classic-wrap")
         }
       >
+
         {/* En-tête fixe */}
         <table className="ft-table">
           <thead>
