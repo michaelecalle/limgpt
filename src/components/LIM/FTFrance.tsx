@@ -1,4 +1,5 @@
 import React from "react"
+import { getFtFranceHhmm } from "../../data/ftFranceTimes"
 
 type Row = {
   sig?: string
@@ -9,6 +10,22 @@ type Row = {
   panto?: string
   radio?: string
 }
+
+  const baseRows: Row[] = [
+    { pk: "748,9", vmax: "200", loc: "FIGUERES-VILAFANT" },
+    { pk: "752,4", vmax: "SEP", loc: "LIMITE ADIF/LFP" },
+
+    { sig: "ERTMS Niv. 1", pk: "25,6", loc: "TETE SUD TUNNEL" },
+    { pk: "24,6", vmax: "300", loc: "FRONTIERE", panto: "25 kV" },
+    { pk: "17,1", loc: "TETE NORD TUNNEL", radio: "GSM-R" },
+    { pk: "12,9", loc: "SAUT DE MOUTON" },
+
+    { sig: "SEP", pk: "1,2", vmax: "SEP", loc: "LIMITE LGV-RAC", panto: "SEP" },
+
+    { sig: "BAL KVB", pk: "471,0", vmax: "160", loc: "LIMITE RAC LFP-FRR", panto: "1,5 kV" },
+    { pk: "467,5", loc: "PERPIGNAN" },
+  ]
+
 
 const COL_W = {
   sig: 140,
@@ -67,7 +84,7 @@ function Td({
     <td
       className={
         (isSep ? "px-0 py-2" : "px-2 py-2") +
-        " text-[12px] leading-tight " +
+        " text-[14px] leading-tight font-semibold " +
         className
       }
       style={{
@@ -92,6 +109,7 @@ function Td({
       </div>
     </td>
   )
+
 }
 
 function SpacerTd({ colSpan }: { colSpan?: number }) {
@@ -146,24 +164,99 @@ function detectNightFromDom(): boolean {
   return hasDarkClass || isNightAttr
 }
 
-export default function FTFrance() {
-  const rows: Row[] = [
-    { pk: "748,9", vmax: "200", loc: "FIGUERES-VILAFANT" },
-    { pk: "752,4", vmax: "SEP", loc: "LIMITE ADIF/LFP" },
+function getDirectionFromTrainNumber(trainNumber?: number | null) {
+  if (trainNumber == null) return null
+  return trainNumber % 2 === 0 ? "FR_TO_ES" : "ES_TO_FR"
+}
 
-    { sig: "ERTMS Niv. 1", pk: "25,6", loc: "TETE SUD TUNNEL" },
-    { pk: "24,6", vmax: "300", loc: "FRONTIERE", panto: "25 kV" },
-    { pk: "17,1", loc: "TETE NORD TUNNEL", radio: "GSM-R" },
-    { pk: "12,9", loc: "SAUT DE MOUTON" },
+function isFigueresPk(pk?: string) {
+  return pk === "748,9"
+}
 
-    { sig: "SEP", pk: "1,2", vmax: "SEP", loc: "LIMITE LGV-RAC", panto: "SEP" },
+type FTFranceProps = {
+  trainNumber?: number | null
+  // Source FT Espagne (valeurs déjà "finalisées" côté Espagne)
+  figueresDepartureHhmm?: string | null // ES->FR
+  figueresArrivalHhmm?: string | null   // FR->ES
+}
 
-    { sig: "BAL KVB", pk: "471,0", vmax: "160", loc: "LIMITE RAC LFP-FRR", panto: "1,5 kV" },
-    { pk: "467,5", loc: "PERPIGNAN" },
-  ]
+export default function FTFrance({
+  trainNumber,
+  figueresDepartureHhmm = null,
+  figueresArrivalHhmm = null,
+}: FTFranceProps) {
+  // ============================================================
+  // Heure Figueres (source FT Espagne)
+  // ES->FR : départ / FR->ES : arrivée
+  // ============================================================
+  const direction = getDirectionFromTrainNumber(trainNumber)
+
+  const figueresHhmm: string | null =
+    direction === "ES_TO_FR"
+      ? figueresDepartureHhmm
+      : direction === "FR_TO_ES"
+      ? figueresArrivalHhmm
+      : null
+
+  const getHhmmForRow = React.useCallback(
+    (pk?: string) => {
+      // Figueres : source Espagne (départ ou arrivée selon le sens)
+      if (isFigueresPk(pk)) {
+        const v = figueresHhmm ?? ""
+        return v.trim() ? v : "—"
+      }
+
+      // ✅ Mapping PK spécifique aux trains pairs (FR->ES)
+      // On garde l’affichage des PK (baseRows), mais on lit les heures sur des PK corrigés.
+      let lookupPk = pk
+      if (direction === "FR_TO_ES") {
+        if (pk === "471,0") lookupPk = "472,3"
+        if (pk === "1,2") lookupPk = "0,8"
+      }
+
+      // Autres : data FT France
+      return getFtFranceHhmm(trainNumber ?? null, lookupPk)
+    },
+    [trainNumber, figueresHhmm, direction]
+  )
+
+
+
+
+  const rows = React.useMemo(() => {
+    const direction = getDirectionFromTrainNumber(trainNumber)
+
+    // 1) rows "de base"
+    const base = baseRows
+
+    // 2) inversion selon le sens -> rows finales affichées
+    const finalRows =
+      direction === "FR_TO_ES" ? base.slice().reverse() : base.slice()
+
+    // 3) correction PK selon le sens (PK affiché = PK réel)
+    const pkFixedRows =
+      direction === "FR_TO_ES"
+        ? finalRows.map((r) => {
+            if (r.pk === "471,0") return { ...r, pk: "472,3" }
+            if (r.pk === "1,2") return { ...r, pk: "0,8" }
+            return r
+          })
+        : finalRows
+
+    // 4) injection hh:mm sur toutes les lignes (sur la PK affichée)
+    return pkFixedRows.map((r) => {
+      const hhmmValue = getHhmmForRow(r.pk)
+      if (!hhmmValue) return r
+      return { ...r, hhmm: hhmmValue }
+    })
+  }, [trainNumber, getHhmmForRow])
+
+
 
   // ✅ état nuit piloté par l’app (event), avec fallback DOM
   const [isNight, setIsNight] = React.useState<boolean>(() => detectNightFromDom())
+
+
 
   React.useEffect(() => {
     const onTheme = (e: Event) => {
@@ -331,7 +424,7 @@ export default function FTFrance() {
                       <SpacerTd />
                     ) : (
                       <Td
-                        className="uppercase tracking-[0.02em] text-[11px]"
+className="uppercase tracking-[0.02em] text-[13px]"
                         bg={bgLoc}
                       >
                         {r.loc ?? ""}
@@ -343,22 +436,43 @@ export default function FTFrance() {
                       <SpacerTd />
                     ) : (
                       <Td align="center" className="tabular-nums" bg={bgHhmm}>
-                        {r.hhmm ?? ""}
+{r.hhmm === "—" ? <span className="opacity-50">—</span> : r.hhmm ?? ""}
                       </Td>
                     )}
 
                     {/* Panto (PAS surligné) */}
                     {isSpacer ? (
-                      isSepValue(rows[item.origIdx]?.panto) ? (
-                        <SepSpacerTd />
-                      ) : (
-                        <SpacerTd />
-                      )
+                      (() => {
+                        // Le séparateur Panto doit être entre 471,0 et 1,2 (dans n'importe quel sens).
+                        // Sur un spacer "après" la ligne origIdx, la paire concernée est :
+                        // prev = rows[origIdx] (ligne au-dessus du spacer)
+                        // next = rows[origIdx + 1] (ligne en dessous du spacer)
+                        const prev = rows[item.origIdx]
+                        const next =
+                          item.origIdx + 1 < rows.length ? rows[item.origIdx + 1] : null
+
+                        const pkPrev = prev?.pk ?? ""
+                        const pkNext = next?.pk ?? ""
+
+                        const isBoundary471_12 =
+                          (pkPrev === "471,0" && pkNext === "1,2") ||
+                          (pkPrev === "1,2" && pkNext === "471,0")
+
+                        const isBoundary4723_08 =
+                          (pkPrev === "472,3" && pkNext === "0,8") ||
+                          (pkPrev === "0,8" && pkNext === "472,3")
+
+                        const isBoundary = isBoundary471_12 || isBoundary4723_08
+
+                        return isBoundary ? <SepSpacerTd /> : <SpacerTd />
+                      })()
+
                     ) : (
                       <Td align="center" className="font-semibold">
                         {isSepValue(r.panto) ? "" : r.panto ?? ""}
                       </Td>
                     )}
+
 
                     {/* Radio (PAS surligné) */}
                     {isSpacer ? (

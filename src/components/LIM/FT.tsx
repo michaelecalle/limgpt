@@ -338,15 +338,19 @@ export default function FT({ variant = "classic" }: FTProps) {
         // ex: "Barcelona Sants - Can Tunis AV"
         // ex: "Figueres-Vilafant - Limite ADIF - LFPSA"
         //
-        // stratégie : split sur tirets " - " et on prend [0] comme origine et [last] comme destination.
+        // stratégie :
+        // - split UNIQUEMENT sur les séparateurs avec espaces (" - " ou " – ")
+        //   pour ne pas casser des noms comme "Figueres-Vilafant"
+        // - origine = 1er segment
+        // - destination = tout le reste re-joint avec " - "
         const parts = odRaw
-          .split(/\s*[-–]\s*/)
+          .split(/\s+[-–]\s+/)
           .map((s: string) => s.trim())
           .filter(Boolean);
 
         if (parts.length >= 2) {
           const start = parts[0];
-          const end = parts[parts.length - 1];
+          const end = parts.slice(1).join(" - ");
           console.log(
             "[FT] lim:parsed origenDestino=",
             odRaw,
@@ -2010,11 +2014,16 @@ const computeFixedDelay = (now: Date, ftMinutes: number) => {
       console.log("[FT][gps] position reçue =", detail);
       console.log("[FT][gps] rawEntries.length =", rawEntries.length);
 
-      // PK brut reçu
-      const pkRaw = (detail as any).pk as number | null | undefined;
-      // PK "utilisable" (peut être forcé à null par le garde-fou)
-      let pk: number | null =
-        typeof pkRaw === "number" && Number.isFinite(pkRaw) ? pkRaw : null;
+// PK brut reçu
+const pkRaw = (detail as any).pk as number | null | undefined;
+// PK "utilisable" (peut être forcé à null par le garde-fou)
+let pk: number | null =
+  typeof pkRaw === "number" && Number.isFinite(pkRaw) ? pkRaw : null;
+
+// ✅ info moteur PK : permet d’ignorer le garde-fou FT lors d’une bascule de référentiel
+const acceptedMode = (detail as any)?.pkDecision?.acceptedMode ?? null;
+const isRelock = acceptedMode === "relock";
+
 
       // --- Qualité GPS + machine d'états (RED / ORANGE / GREEN) + hystérésis ---
       const nowTs = Date.now();
@@ -2048,6 +2057,7 @@ const computeFixedDelay = (now: Date, ftMinutes: number) => {
       let pkJumpSuspect = false;
 
       if (
+        !isRelock &&
         hasGpsFix &&
         onLine &&
         !isStale &&
@@ -2055,18 +2065,19 @@ const computeFixedDelay = (now: Date, ftMinutes: number) => {
         lastCoherentPk != null &&
         lastCoherentTs > 0
       ) {
-        const dtSecRaw = Math.max(0, (sampleTs - lastCoherentTs) / 1000);
+        const dtSecRaw = Math.max(0, (sampleTs - lastCoherentTs) / 1000)
         // ✅ On évite le “trou” à 0.99s : on détecte quand même,
         // en bornant juste le dt utilisé pour la tolérance.
-        const dtSec = Math.max(dtSecRaw, GPS_JUMP_MIN_ELAPSED_SEC);
+        const dtSec = Math.max(dtSecRaw, GPS_JUMP_MIN_ELAPSED_SEC)
 
-        const maxDeltaKm = GPS_JUMP_BASE_TOLERANCE_KM + speedKmPerSec * dtSec;
-        const dPk = Math.abs(pk - lastCoherentPk);
+        const maxDeltaKm = GPS_JUMP_BASE_TOLERANCE_KM + speedKmPerSec * dtSec
+        const dPk = Math.abs(pk - lastCoherentPk)
 
         if (dPk > maxDeltaKm) {
-          pkJumpSuspect = true;
+          pkJumpSuspect = true
         }
       }
+
 
       // Entrée en garde-fou : on se base sur le DERNIER PK cohérent
       if (
@@ -3264,6 +3275,79 @@ logTestEvent("gps:mode-check", {
     const pad = (n: number) => n.toString().padStart(2, "0");
     return `${pad(hh)}:${pad(mm)}`;
   }
+
+    // ============================================================
+  // Export heures Figueres (départ + arrivée) depuis la FT Espagne
+  // ============================================================
+  const figueresTimes = useMemo(() => {
+    // 1) trouver l'index de FIGUERES-VILAFANT
+    let figIdx: number | null = null;
+
+    for (let i = 0; i < rawEntries.length; i++) {
+      const e = rawEntries[i] as any;
+      if (e?.isNoteOnly) continue;
+
+      const depNorm = (e?.dependencia ?? "")
+        .toUpperCase()
+        .replace(/\s+/g, " ")
+        .trim();
+
+      if (depNorm === "FIGUERES-VILAFANT") {
+        figIdx = i;
+        break;
+      }
+    }
+
+    if (figIdx == null) {
+      return { departureHhmm: null as string | null, arrivalHhmm: null as string | null };
+    }
+
+    // 2) heure de départ (même logique que l’affichage)
+    const departure = resolveHoraForRowIndex(figIdx);
+    const departureHhmm = departure && departure.trim() ? departure.trim() : null;
+
+    // 3) heure d’arrivée = départ - COM (même logique que l’affichage)
+    let arrivalHhmm: string | null = null;
+
+    const isOriginOrTerminus = figIdx === firstNonNoteIndex || figIdx === lastNonNoteIndex;
+
+    if (departureHhmm && !isOriginOrTerminus) {
+      const codesPourHeure = codesCParHeure[departureHhmm] ?? [];
+      const firstCode = codesPourHeure[0];
+      const n = Number(firstCode);
+
+      if (Number.isFinite(n) && n > 0) {
+        const depMinutes = parseHoraToMinutes(departureHhmm);
+        if (depMinutes != null) {
+          const arrMinutes = depMinutes - n;
+          arrivalHhmm = formatMinutesToHora(arrMinutes);
+        }
+      }
+    }
+
+    return { departureHhmm, arrivalHhmm };
+  }, [
+    rawEntries,
+    codesCParHeure,
+    heuresDetectees,
+    firstNonNoteIndex,
+    lastNonNoteIndex,
+  ]);
+
+  useEffect(() => {
+    window.dispatchEvent(
+      new CustomEvent("ft:figueres-hhmm", {
+        detail: {
+          departureHhmm: figueresTimes.departureHhmm,
+          arrivalHhmm: figueresTimes.arrivalHhmm,
+        },
+      })
+    );
+
+    // Debug léger (tu peux enlever après validation)
+    console.log("[FT] ft:figueres-hhmm", figueresTimes);
+  }, [figueresTimes.departureHhmm, figueresTimes.arrivalHhmm]);
+
   // ===== Horaires théoriques (interpolation PK ↔ temps) =====
   // ✅ Règle : entre A -> B, on interpole de :
   // - départ(A)

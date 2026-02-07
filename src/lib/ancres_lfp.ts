@@ -8,7 +8,18 @@ export type AnchorLFP = {
   label: string
 }
 
+
 export const ANCRES_LFP: AnchorLFP[] = [
+
+  {
+  pk_lfp: 44.4,
+  s_km: 136.442302,
+  lat: 42.2873328,
+  lon: 2.9331729,
+  index_ruban: 5460,
+  label: 'LIMITE ADIF-LFPSA',
+},
+
   {
     pk_lfp: 41.8,
     s_km: 137.092765,

@@ -136,6 +136,32 @@ export default function App() {
   const [ftViewMode, setFtViewMode] = React.useState<FtViewMode>("ES")
   const [trainNumber, setTrainNumber] = React.useState<number | null>(null)
 
+    // ============================================================
+  // Heures Figueres (publiées par la FT Espagne via event)
+  // ============================================================
+  const [figueresDepartureHhmm, setFigueresDepartureHhmm] = React.useState<string | null>(null)
+  const [figueresArrivalHhmm, setFigueresArrivalHhmm] = React.useState<string | null>(null)
+
+  React.useEffect(() => {
+    const onFigueres = (e: Event) => {
+      const ce = e as CustomEvent
+      const depRaw = ce?.detail?.departureHhmm
+      const arrRaw = ce?.detail?.arrivalHhmm
+
+      const dep =
+        typeof depRaw === "string" && depRaw.trim() ? depRaw.trim() : null
+      const arr =
+        typeof arrRaw === "string" && arrRaw.trim() ? arrRaw.trim() : null
+
+      setFigueresDepartureHhmm(dep)
+      setFigueresArrivalHhmm(arr)
+    }
+
+    window.addEventListener("ft:figueres-hhmm", onFigueres as EventListener)
+    return () =>
+      window.removeEventListener("ft:figueres-hhmm", onFigueres as EventListener)
+  }, [])
+
   // Critère "FT France disponible" (déjà en place : whitelist par n° de train)
   const FT_FR_WHITELIST = React.useMemo(
     () => new Set<number>([9712, 9714, 9707, 9709, 9705, 9710]),
@@ -158,6 +184,8 @@ export default function App() {
       const ce = e as CustomEvent
       const raw = ce?.detail?.trainNumber
       const n = typeof raw === "number" ? raw : parseInt(String(raw ?? ""), 10)
+            console.log("[TRAIN_EVT]", (e as any)?.type, { raw, n })
+
       if (!Number.isNaN(n)) setTrainNumber(n)
     }
 
@@ -300,6 +328,15 @@ export default function App() {
       if (file) {
         setRawPdfFile(file)
         console.log("[App] PDF brut reçu =", file)
+console.log("[APP_IMPORT_STATE]", {
+  ftViewMode,
+  trainNumber,
+  showFtFranceOverlay,
+})
+
+                // ✅ À chaque import PDF, on repart par défaut sur la FT Espagne (ADIF)
+        setFtViewMode("ES")
+
 
         // URL pour l'iframe (mode rouge sans images)
         const url = URL.createObjectURL(file)
@@ -558,7 +595,11 @@ export default function App() {
                   }}
                 >
                   <div className={"h-full w-full p-3 " + (isDark ? "bg-zinc-950" : "bg-white")}>
-                    <FTFrance trainNumber={trainNumber} />
+                    <FTFrance
+                      trainNumber={trainNumber}
+                      figueresDepartureHhmm={figueresDepartureHhmm}
+                      figueresArrivalHhmm={figueresArrivalHhmm}
+                    />
                   </div>
                 </div>
               )}

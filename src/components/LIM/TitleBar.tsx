@@ -73,6 +73,35 @@ export default function TitleBar() {
     )
   }, [ftViewMode])
 
+  // =========================
+  // AUTO resolve (pré-calage GPS post-parsing)
+  // - Calculé après lim:parsed (GPS ponctuel)
+  // - Ne déclenche AUCUN switch automatique ici (ça viendra au clic AUTO, étape 2)
+  // =========================
+  const AUTO_FR_SKM_THRESHOLD = 136.442302
+
+  type AutoResolvedSide = 'ES' | 'FR' | null
+
+  const [autoResolved, setAutoResolved] = useState<{
+    available: boolean
+    side: AutoResolvedSide
+    s_km: number | null
+    pk: number | null
+    ts: number | null
+    reason: 'ok' | 'no_geolocation' | 'permission_denied' | 'timeout' | 'proj_null' | 'no_s_km' | 'engine_not_ready' | 'error' | null
+  }>(() => ({
+    available: false,
+    side: null,
+    s_km: null,
+    pk: null,
+    ts: null,
+    reason: null,
+  }))
+
+  const resolveSideFromSkm = (s_km: number | null): AutoResolvedSide => {
+    if (typeof s_km !== 'number' || !Number.isFinite(s_km)) return null
+    return s_km < AUTO_FR_SKM_THRESHOLD ? 'ES' : 'FR'
+  }
 
 
     // ----- TRAITEMENT PDF (spinner + garde-fou timeout) -----
@@ -1185,32 +1214,336 @@ const waitMs = Math.max(0, (simTs - prevSimTs) / Math.max(0.0001, SPEED))
 
 
 
-  useEffect(() => {
-    const onParsed = (e: Event) => {
-      const ce = e as CustomEvent
-      const detail = (ce.detail || {}) as LIMFields
-      ;(window as any).__limLastParsed = detail
+useEffect(() => {
+  const onParsed = (e: Event) => {
+    const ce = e as CustomEvent
+    const detail = (ce.detail || {}) as LIMFields
+    ;(window as any).__limLastParsed = detail
 
-      // ✅ Spinner OFF : parsing terminé
-            // ✅ On coupe le garde-fou : on a bien reçu la fin de traitement
-      stopPdfLoadingGuard()
+    // ✅ DEBUG / TEST : confirmer que lim:parsed arrive bien en TitleBar
+    logTestEvent('ui:lim:parsed', {
+      train: (detail as any)?.trenPadded ?? (detail as any)?.tren ?? null,
+      type: (detail as any)?.type ?? null,
+      composicion: (detail as any)?.composicion ?? (detail as any)?.unit ?? null,
+      source: 'titlebar:onParsed',
+    })
 
-      setPdfLoading(false)
+    // ✅ Spinner OFF : parsing terminé
+    // ✅ On coupe le garde-fou : on a bien reçu la fin de traitement
+    stopPdfLoadingGuard()
+    setPdfLoading(false)
 
-      // mise à jour du numéro de train
-      const raw = detail.trenPadded ?? detail.tren
-      const disp = toTitleNumber(raw)
-      setTrainDisplay(disp)
+    // mise à jour du numéro de train
+    const raw = detail.trenPadded ?? detail.tren
+    const disp = toTitleNumber(raw)
+    setTrainDisplay(disp)
 
-      // mise à jour du type (ex: T200)
-      const rawType = (detail as any).type
-      setTrainType(rawType ? String(rawType) : undefined)
+    // mise à jour du type (ex: T200)
+    const rawType = (detail as any).type
+    setTrainType(rawType ? String(rawType) : undefined)
 
-      // mise à jour de la composition (ex: US)
-      const rawComp = (detail as any).composicion ?? (detail as any).unit
-      setTrainComposition(rawComp ? String(rawComp) : undefined)
-    }
+    // mise à jour de la composition (ex: US)
+    const rawComp = (detail as any).composicion ?? (detail as any).unit
+    setTrainComposition(rawComp ? String(rawComp) : undefined)
 
+    // =========================
+    // Pré-calage GPS ponctuel (post-parsing)
+    // - On tente de déterminer s_km puis ES/FR
+    // - Ne change PAS le ftViewMode ici
+    // =========================
+    ;(async () => {
+      try {
+        // reset état "AUTO dispo" à chaque nouveau parsing
+        setAutoResolved({
+          available: false,
+          side: null,
+          s_km: null,
+          pk: null,
+          ts: Date.now(),
+          reason: null,
+        })
+
+        if (typeof navigator === 'undefined' || !('geolocation' in navigator)) {
+          setAutoResolved((prev) => ({
+            ...prev,
+            available: false,
+            side: null,
+            reason: 'no_geolocation',
+            ts: Date.now(),
+          }))
+          logTestEvent('ui:auto:precal:failed', { reason: 'no_geolocation', source: 'onParsed' })
+          return
+        }
+
+        // ✅ s'assure que le moteur est prêt (sans toucher à sa logique)
+        if (!gpsPkReady) {
+          try {
+            await initGpsPkEngine()
+            setGpsPkReady(true)
+          } catch {
+            setAutoResolved((prev) => ({
+              ...prev,
+              available: false,
+              side: null,
+              reason: 'engine_not_ready',
+              ts: Date.now(),
+            }))
+            logTestEvent('ui:auto:precal:failed', { reason: 'engine_not_ready', source: 'onParsed' })
+            return
+          }
+        }
+
+        const getPos = () =>
+          new Promise<GeolocationPosition>((resolve, reject) => {
+            navigator.geolocation.getCurrentPosition(resolve, reject, {
+              enableHighAccuracy: true,
+              maximumAge: 10_000,
+              timeout: 6_000,
+            })
+          })
+
+        const pos = await getPos()
+        const lat = pos.coords.latitude
+        const lon = pos.coords.longitude
+        const accuracy = pos.coords.accuracy
+
+        const proj = projectGpsToPk(lat, lon)
+        if (!proj) {
+          setAutoResolved({
+            available: false,
+            side: null,
+            s_km: null,
+            pk: null,
+            ts: Date.now(),
+            reason: 'proj_null',
+          })
+          logTestEvent('ui:auto:precal:failed', {
+            reason: 'proj_null',
+            source: 'onParsed',
+            lat,
+            lon,
+            accuracy,
+          })
+          return
+        }
+
+        const s_km = typeof proj.s_km === 'number' && Number.isFinite(proj.s_km) ? proj.s_km : null
+        const pk = typeof proj.pk === 'number' && Number.isFinite(proj.pk) ? proj.pk : null
+
+        const side = resolveSideFromSkm(s_km)
+
+        if (side == null) {
+          setAutoResolved({
+            available: false,
+            side: null,
+            s_km,
+            pk,
+            ts: Date.now(),
+            reason: 'no_s_km',
+          })
+          logTestEvent('ui:auto:precal:failed', {
+            reason: 'no_s_km',
+            source: 'onParsed',
+            s_km,
+            pk,
+            lat,
+            lon,
+            accuracy,
+          })
+          return
+        }
+
+        setAutoResolved({
+          available: true,
+          side,
+          s_km,
+          pk,
+          ts: Date.now(),
+          reason: 'ok',
+        })
+
+        logTestEvent('ui:auto:precal:ok', {
+          source: 'onParsed',
+          side,
+          s_km,
+          pk,
+          accuracy: typeof accuracy === 'number' ? accuracy : null,
+        })
+      } catch (err: any) {
+        const code = err?.code
+        const isTimeout = code === 3
+        const isDenied = code === 1
+
+        const reason =
+          isDenied ? 'permission_denied' : isTimeout ? 'timeout' : 'error'
+
+        setAutoResolved((prev) => ({
+          ...prev,
+          available: false,
+          side: null,
+          reason,
+          ts: Date.now(),
+        }))
+
+        logTestEvent('ui:auto:precal:failed', {
+          reason,
+          source: 'onParsed',
+          code: typeof code === 'number' ? code : null,
+          message: err?.message ?? String(err),
+        })
+      }
+    })()
+  }
+
+
+
+      // =========================
+      // Pré-calage GPS ponctuel (post-parsing)
+      // - On tente de déterminer s_km puis ES/FR
+      // - Ne change PAS le ftViewMode ici
+      // =========================
+      ;(async () => {
+        try {
+          // reset état "AUTO dispo" à chaque nouveau parsing
+          setAutoResolved({
+            available: false,
+            side: null,
+            s_km: null,
+            pk: null,
+            ts: Date.now(),
+            reason: null,
+          })
+
+          if (typeof navigator === 'undefined' || !('geolocation' in navigator)) {
+            setAutoResolved((prev) => ({
+              ...prev,
+              available: false,
+              side: null,
+              reason: 'no_geolocation',
+              ts: Date.now(),
+            }))
+            logTestEvent('ui:auto:precal:failed', { reason: 'no_geolocation', source: 'onParsed' })
+            return
+          }
+
+          // ✅ s'assure que le moteur est prêt (sans toucher à sa logique)
+          if (!gpsPkReady) {
+            try {
+              await initGpsPkEngine()
+              setGpsPkReady(true)
+            } catch {
+              setAutoResolved((prev) => ({
+                ...prev,
+                available: false,
+                side: null,
+                reason: 'engine_not_ready',
+                ts: Date.now(),
+              }))
+              logTestEvent('ui:auto:precal:failed', { reason: 'engine_not_ready', source: 'onParsed' })
+              return
+            }
+          }
+
+          const getPos = () =>
+            new Promise<GeolocationPosition>((resolve, reject) => {
+              navigator.geolocation.getCurrentPosition(resolve, reject, {
+                enableHighAccuracy: true,
+                maximumAge: 10_000,
+                timeout: 6_000,
+              })
+            })
+
+          const pos = await getPos()
+          const lat = pos.coords.latitude
+          const lon = pos.coords.longitude
+          const accuracy = pos.coords.accuracy
+
+          const proj = projectGpsToPk(lat, lon)
+          if (!proj) {
+            setAutoResolved({
+              available: false,
+              side: null,
+              s_km: null,
+              pk: null,
+              ts: Date.now(),
+              reason: 'proj_null',
+            })
+            logTestEvent('ui:auto:precal:failed', {
+              reason: 'proj_null',
+              source: 'onParsed',
+              lat,
+              lon,
+              accuracy,
+            })
+            return
+          }
+
+          const s_km = typeof proj.s_km === 'number' && Number.isFinite(proj.s_km) ? proj.s_km : null
+          const pk = typeof proj.pk === 'number' && Number.isFinite(proj.pk) ? proj.pk : null
+
+          const side = resolveSideFromSkm(s_km)
+
+          if (side == null) {
+            setAutoResolved({
+              available: false,
+              side: null,
+              s_km,
+              pk,
+              ts: Date.now(),
+              reason: 'no_s_km',
+            })
+            logTestEvent('ui:auto:precal:failed', {
+              reason: 'no_s_km',
+              source: 'onParsed',
+              s_km,
+              pk,
+              lat,
+              lon,
+              accuracy,
+            })
+            return
+          }
+
+          setAutoResolved({
+            available: true,
+            side,
+            s_km,
+            pk,
+            ts: Date.now(),
+            reason: 'ok',
+          })
+
+          logTestEvent('ui:auto:precal:ok', {
+            source: 'onParsed',
+            side,
+            s_km,
+            pk,
+            accuracy: typeof accuracy === 'number' ? accuracy : null,
+          })
+        } catch (err: any) {
+          const code = err?.code
+          const isTimeout = code === 3
+          const isDenied = code === 1
+
+          const reason =
+            isDenied ? 'permission_denied' : isTimeout ? 'timeout' : 'error'
+
+          setAutoResolved((prev) => ({
+            ...prev,
+            available: false,
+            side: null,
+            reason,
+            ts: Date.now(),
+          }))
+
+          logTestEvent('ui:auto:precal:failed', {
+            reason,
+            source: 'onParsed',
+            code: typeof code === 'number' ? code : null,
+            message: err?.message ?? String(err),
+          })
+        }
+      })()
 
     const onTrain = (e: Event) => {
       const ce = e as CustomEvent
@@ -2043,15 +2376,31 @@ const waitMs = Math.max(0, (simTs - prevSimTs) / Math.max(0.0001, SPEED))
               }
 
               // Sinon, on garde ton comportement “tap = toggle / double tap = retour blue”
-              if (currentInput && (currentInput as any).__pdfClickTimer) {
-                clearTimeout((currentInput as any).__pdfClickTimer)
-                ;(currentInput as any).__pdfClickTimer = null
+if (currentInput && (currentInput as any).__pdfClickTimer) {
+  clearTimeout((currentInput as any).__pdfClickTimer)
+  ;(currentInput as any).__pdfClickTimer = null
 
-                if (pdfMode !== 'blue') {
-                  setPdfMode('blue')
-                }
-                return
-              }
+  // ✅ double-clic => retour écran import = RESET complet (comme un "nouveau PDF")
+  if (pdfMode !== 'blue') {
+    setPdfMode('blue')
+  }
+
+  // ✅ retour par défaut sur ADIF (ES)
+  setFtViewMode('ES')
+
+  // ✅ on évite d'afficher un ancien train / ancien toggle pendant l'import
+  setTrainDisplay(undefined)
+  setTrainType(undefined)
+  setTrainComposition(undefined)
+
+  // ✅ reset global (FT, direction, états dérivés, etc.)
+  window.dispatchEvent(new CustomEvent('lim:clear-pdf'))
+  window.dispatchEvent(new CustomEvent('ft:clear-pdf'))
+  window.dispatchEvent(new CustomEvent('lim:pdf-raw', { detail: { file: null } }))
+
+  return
+}
+
 
               if (currentInput) {
                 ;(currentInput as any).__pdfClickTimer = setTimeout(() => {
