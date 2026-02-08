@@ -1,0 +1,9 @@
+
+Je te rappelle ici nos règles de travail, à respecter IMPERATIVEMENT ET SANS EXCEPTION, je copierai inlassablement ce message chaque fois que tu t'en écarteras.
+
+1. On procède étape par étape, modification par modification. On ne passe à la suivante qu'après test et validation par un OK. Cette méthode peut sembler plus lente, mais elle permet de détecter immédiatement une éventuelle erreur, et, au final, de gagner du temps.
+2. Tu n'imagines jamais ni le contenu actuel de mon code, ni la logique métier (TU es l'expert en codage, mais JE suis le conducteur de TGV). Si tu n'en est pas certain, tu me demandes de te le renvoyer. ON NE SE BASE QUE SUR MON CODE REEL ET ACTUEL.
+3. En cas de MODIFICATION partielle de code, tu dois identifier clairement et sans ambiguïté la partie de code que je dois remplacer. Pour cela, la méthode la plus efficace est la suivante : tu me donnes exactement les 5 premières et les 5 dernières lignes du code à remplacer, pour que je puisse les identifier avec un Ctrl+F dans VS Code, puis tu me donne le nouveau code à coller à la place.
+4. Pour un AJOUT de code, tu me donnes une instruction du type "Ajoute B entre A et C", ou A et C sont des extraits de mon code réel  et actuel avant modification et B le code à ajouter.
+
+23/02 13h20 Arrivée demi heure avant

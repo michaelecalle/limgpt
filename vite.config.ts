@@ -3,8 +3,21 @@ import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import { VitePWA } from 'vite-plugin-pwa'
 
+import fs from 'node:fs'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+
 // ✅ route serveur dev pour upload Synology (évite CORS côté navigateur)
 import { handleUploadToSynology } from './server/uploadToSynology'
+
+// ✅ __dirname compatible ESM
+const __filename = fileURLToPath(import.meta.url)
+const __dirname = path.dirname(__filename)
+
+// ✅ Certificats HTTPS (mkcert) — à placer dans ./certs
+const CERT_DIR = path.resolve(__dirname, 'certs')
+const HTTPS_CERT = path.join(CERT_DIR, '192.168.1.58.pem')
+const HTTPS_KEY = path.join(CERT_DIR, '192.168.1.58-key.pem')
 
 export default defineConfig({
   plugins: [
@@ -49,9 +62,16 @@ export default defineConfig({
       },
     }),
   ],
+
   server: {
     host: true,
     port: 5199,
     strictPort: true,
+
+    // ✅ HTTPS pour iPad / Geolocation (secure context)
+    https: {
+      cert: fs.readFileSync(HTTPS_CERT),
+      key: fs.readFileSync(HTTPS_KEY),
+    },
   },
 })

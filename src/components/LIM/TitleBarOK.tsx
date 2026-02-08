@@ -62,9 +62,6 @@ export default function TitleBar() {
   const [ftViewMode, setFtViewMode] = useState<'AUTO' | 'ES' | 'FR'>('ES')
   // ✅ Indique que le mode AUTO est engagé (même après bascule vers ES/FR)
   const [autoEngaged, setAutoEngaged] = useState(false)
-  // ✅ Verrou : après le 1er clic AUTO, on ne refait plus de "sélection auto" (hors Figueres)
-  const autoLockedRef = useRef(false)
-  const autoInitialTargetRef = useRef<'ES' | 'FR' | null>(null)
 
   useEffect(() => {
     window.dispatchEvent(
@@ -83,16 +80,15 @@ export default function TitleBar() {
   // - On utilisera s_km / nearestIdx (ruban) plutôt que PK
   // - Les bornes seront renseignées après un test terrain/log (sans guess)
   // =========================
-  // ✅ Zone Figueres (valeur mesurée) : centre ≈ 133.114904, largeur mini ±0.4 km
-  // -> borne "par défaut" pour que la feature marche tout de suite en replay
   const FIGUERES_ZONE = {
-    sKmMin: 132.714904 as number | null, // 133.114904 - 0.400
-    sKmMax: 133.514904 as number | null, // 133.114904 + 0.400
+    // ✅ Remplir ces valeurs quand on aura mesuré (ex: s_km=xxx.xxx)
+    // (on garde ces champs mais la vraie source devient les refs ci-dessous)
+    sKmMin: null as number | null,
+    sKmMax: null as number | null,
 
     // Tolérance de stabilité (si ruban densifié ~25m, 10 = ~250m)
     stableIdxTolerance: 10,
   }
-
 
   // ✅ Source de vérité runtime pour la zone (modifiable par calibration)
   const figueresZoneMinRef = useRef<number | null>(null)
@@ -112,23 +108,11 @@ export default function TitleBar() {
     if (!figueresArmedRef.current) return false
     const t0 = figueresArmedAtRef.current
     if (typeof t0 !== 'number' || !Number.isFinite(t0)) return false
-
-    // ✅ “now” cohérent : si on a un timestamp de fix (replay), on l’utilise
-    const nowMs =
-      (typeof lastGpsFixRef.current?.ts === 'number' && Number.isFinite(lastGpsFixRef.current.ts))
-        ? lastGpsFixRef.current.ts
-        : Date.now()
-
-    return nowMs - t0 <= FIGUERES_ARM_TTL_MS
+    return Date.now() - t0 <= FIGUERES_ARM_TTL_MS
   }
 
   // ✅ Zone minimale : 400 m de chaque côté (±0.400 km)
   const FIGUERES_MIN_HALF_WIDTH_KM = 0.4
-  // ✅ Ancre Figueres (mesurée dans ton log)
-// Sert de fallback si la zone n'est pas calibrée
-const FIGUERES_SKM_ANCHOR = 133.114904
-const FIGUERES_ANCHOR_TOL_KM = 1.0 // tolérance large, juste pour éviter les faux positifs
-
 
   const isInFigueresZone = (fix: {
     nearestIdx: number | null
@@ -142,18 +126,8 @@ const FIGUERES_ANCHOR_TOL_KM = 1.0 // tolérance large, juste pour éviter les f
     const a = figueresZoneMinRef.current ?? FIGUERES_ZONE.sKmMin
     const b = figueresZoneMaxRef.current ?? FIGUERES_ZONE.sKmMax
 
-// ✅ Si rien n'est calibré => fallback sur l'ancre Figueres (±0.4 km)
-// (et on ajoute une garde : on ne considère la zone que si on est proche de l'ancre)
-if (a == null && b == null) {
-  const min = FIGUERES_SKM_ANCHOR - FIGUERES_MIN_HALF_WIDTH_KM
-  const max = FIGUERES_SKM_ANCHOR + FIGUERES_MIN_HALF_WIDTH_KM
-
-  // garde supplémentaire : si on est totalement loin de l'ancre, on évite un "inZone" absurde
-  if (Math.abs(s_km - FIGUERES_SKM_ANCHOR) > FIGUERES_ANCHOR_TOL_KM) return false
-
-  return s_km >= min && s_km <= max
-}
-
+    // Si rien n'est calibré => pas de zone
+    if (a == null && b == null) return false
 
     // Si une seule borne est connue : on prend cette valeur comme "centre"
     const rawMin = a != null ? a : (b as number)
@@ -777,15 +751,6 @@ ${coords}
     s_km: number | null
     onLine: boolean | null
   } | null>(null)
-  // =========================
-  // Figueres — détection "arrêt" (fixe) via ruban
-  // - On considère "figé" si nearestIdx reste stable (±tolérance) pendant N ms
-  // - N doit être cohérent avec ta règle FT (ex: 30s)
-  // =========================
-  const FIGUERES_STOP_STABLE_MS = 30_000 // 30s (à aligner avec ta règle métier)
-  const figueresStableSinceRef = useRef<number | null>(null)
-  const figueresStableIdxRef = useRef<number | null>(null)
-  const figueresStopTriggeredRef = useRef(false)
 
   useEffect(() => {
     gpsStateRef.current = gpsState
@@ -796,61 +761,15 @@ ${coords}
   useEffect(() => {
     if (gpsState !== 2) return // 2 = GREEN
     const fix = lastGpsFixRef.current
-    if (!fix) return
-
-    // ✅ REPLAY ONLY : auto-calib silencieux
-    // On ne tente l’auto-calib que si le 1er GREEN est déjà "près" de la zone Figueres attendue.
-    if (
-      gpsReplayBusy &&
-      figueresZoneMinRef.current == null &&
-      figueresZoneMaxRef.current == null &&
-      typeof fix.s_km === 'number' &&
-      Number.isFinite(fix.s_km)
-    ) {
-      const zMin = FIGUERES_ZONE.sKmMin
-      const zMax = FIGUERES_ZONE.sKmMax
-
-      const hasBounds =
-        typeof zMin === 'number' &&
-        Number.isFinite(zMin) &&
-        typeof zMax === 'number' &&
-        Number.isFinite(zMax)
-
-      // Si pas de bornes connues, on ne fait rien ici.
-      if (hasBounds) {
-        const minZ = Math.min(zMin as number, zMax as number) - 1.0 // marge 1 km
-        const maxZ = Math.max(zMin as number, zMax as number) + 1.0
-
-        const plausible = fix.s_km >= minZ && fix.s_km <= maxZ
-
-        if (plausible) {
-          figueresZoneMinRef.current = fix.s_km
-          figueresZoneMaxRef.current = fix.s_km
-
-          console.log('[Figueres][REPLAY] AUTO-CALIB ZONE', { s_km: fix.s_km })
-          logTestEvent('figueres:calib:auto', {
-            source: 'replay_auto',
-            s_km: fix.s_km,
-            tLocal: Date.now(),
-          })
-        }
-        // ✅ sinon: silencieux (pas de "SKIP" spam au début du replay)
-      }
-    }
-
+    if (!isInFigueresZone(fix)) return
 
     figueresArmedRef.current = true
-
-    // ✅ tArmed cohérent : en replay, fix.ts = temps simulé ; sinon Date.now()
-    const tArmed =
-      (typeof fix.ts === 'number' && Number.isFinite(fix.ts)) ? fix.ts : Date.now()
-
-    figueresArmedAtRef.current = tArmed
+    figueresArmedAtRef.current = Date.now()
 
     console.log('[Figueres] ARMED (GREEN in zone)', {
       s_km: fix?.s_km ?? null,
       idx: fix?.nearestIdx ?? null,
-      tLocal: tArmed,
+      tLocal: figueresArmedAtRef.current,
     })
     logTestEvent('figueres:armed', {
       reason: 'green_in_zone',
@@ -859,80 +778,7 @@ ${coords}
       tLocal: figueresArmedAtRef.current,
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [gpsState, gpsReplayBusy])
-  // ✅ Arrêt Figueres => bascule automatique du toggle FT
-  // Conditions :
-  // - Figueres "armé" (on a eu du GREEN dans la zone récemment)
-  // - fix dans la zone (s_km)
-  // - ruban stable >= FIGUERES_STOP_STABLE_MS
-  useEffect(() => {
-    const t = window.setInterval(() => {
-      // 1) doit être armé
-      if (!isFigueresArmed()) {
-        figueresStopTriggeredRef.current = false
-        return
-      }
-
-      const fix = lastGpsFixRef.current
-      if (!fix) return
-
-      // 2) doit être dans la zone Figueres
-      if (!isInFigueresZone(fix)) {
-        figueresStopTriggeredRef.current = false
-        return
-      }
-
-      // 3) doit être stable (figé)
-      const t0 = figueresStableSinceRef.current
-      if (typeof t0 !== 'number' || !Number.isFinite(t0)) return
-
-      // ✅ En replay on utilise l’horloge réelle, sinon timestamp GPS
-const nowMs = gpsReplayBusy
-  ? Date.now()
-  : (lastGpsFixRef.current?.ts ?? Date.now())
-const stableMs = nowMs - t0
-      if (stableMs < FIGUERES_STOP_STABLE_MS) return
-
-      // 4) éviter de retrigger en boucle
-      if (figueresStopTriggeredRef.current) return
-      figueresStopTriggeredRef.current = true
-
-      // 👉 ACTION MÉTIER : bascule du toggle
-      // Hypothèse : à Figueres on veut basculer sur FR (LFP).
-      // Si tu veux l’inverse (ES), on changera UNE ligne.
-      const target: 'FR' | 'ES' = 'FR'
-
-      // Si l’utilisateur n’a pas engagé AUTO, on ne force pas
-      if (!autoEngaged) {
-        console.log('[Figueres][DEBUG] autoEngaged=', autoEngaged)
-        logTestEvent('figueres:auto-switch:skipped', {
-          reason: 'auto_not_engaged',
-          target,
-          stableMs,
-          s_km: fix?.s_km ?? null,
-          nearestIdx: fix?.nearestIdx ?? null,
-        })
-        return
-      }
-
-      setFtViewMode(target)
-      logTestEvent('figueres:auto-switch:applied', {
-        target,
-        stableMs,
-        s_km: fix?.s_km ?? null,
-        nearestIdx: fix?.nearestIdx ?? null,
-      })
-
-      console.log('[Figueres] AUTO SWITCH FT =>', target, {
-        stableMs,
-        s_km: fix?.s_km ?? null,
-        idx: fix?.nearestIdx ?? null,
-      })
-    }, 250)
-
-    return () => window.clearInterval(t)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [autoEngaged])
+  }, [gpsState])
 
   useEffect(() => {
     // 🔊 diffusion globale (comportement existant)
@@ -1862,44 +1708,34 @@ const stableMs = nowMs - t0
           ? Math.trunc(d.timestamp)
           : Date.now()
 
-      // ✅ mémorisation du dernier fix utile Figueres
       lastGpsFixRef.current = { ts, nearestIdx, s_km, onLine }
-
-      // ✅ détection "figé" (stabilité ruban)
-      // On ne calcule la stabilité que si on a un idx et qu'on est sur la ligne.
-      const now = ts // ts vient déjà de d.timestamp (ou Date.now fallback)
-      if (nearestIdx != null && onLine === true) {
-        const prevIdx = figueresStableIdxRef.current
-
-        if (prevIdx == null) {
-          figueresStableIdxRef.current = nearestIdx
-          figueresStableSinceRef.current = now
-        } else {
-          const tol = FIGUERES_ZONE.stableIdxTolerance
-          const dIdx = Math.abs(nearestIdx - prevIdx)
-
-          if (dIdx <= tol) {
-            // stable → on garde stableSince
-          } else {
-            // mouvement → on réarme la stabilité
-            figueresStableIdxRef.current = nearestIdx
-            figueresStableSinceRef.current = now
-          }
-        }
-      } else {
-        // pas exploitable → on réinitialise la stabilité
-        figueresStableIdxRef.current = null
-        figueresStableSinceRef.current = null
-      }
     }
 
     window.addEventListener('gps:position', handler as EventListener)
     return () => window.removeEventListener('gps:position', handler as EventListener)
   }, [])
 
+  // synchronise le bouton Play/Pause + état horaire/standby si FT change le mode auto-scroll
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const ce = e as CustomEvent
+      const detail = (ce.detail || {}) as any
+      const enabled = !!detail.enabled
+      const standby = !!detail.standby
 
+      setAutoScroll(enabled)
 
+      if ('standby' in detail) {
+        setHourlyMode(enabled || standby)
+        setStandbyMode(standby)
+      }
+    }
 
+    window.addEventListener('ft:auto-scroll-change', handler as EventListener)
+    return () => {
+      window.removeEventListener('ft:auto-scroll-change', handler as EventListener)
+    }
+  }, [])
 
 
   // ----- GPS : démarrage / arrêt du watchPosition -----
@@ -2508,20 +2344,8 @@ const stableMs = nowMs - t0
                             return
                           }
 
-                          // ✅ Clic AUTO :
-                          // - 1er clic : engage AUTO + applique la sélection auto (latence ergonomique)
-                          // - clics suivants : NE RECALENT PAS sur la position réelle (AUTO reste verrouillé)
+                          // ✅ Clic AUTO = engage le mode auto + latence ergonomique, puis bascule ES/FR
                           if (isAuto) {
-                            if (autoEngaged) {
-                              // déjà armé => on ne refait pas un choix auto
-                              logTestEvent('ui:ftViewMode:auto:ignored', {
-                                source: 'titlebar',
-                                reason: 'already_engaged',
-                                currentMode: ftViewMode,
-                              })
-                              return
-                            }
-
                             setAutoEngaged(true)
 
                             // feedback immédiat : on affiche AUTO sélectionné pendant la latence
@@ -2546,17 +2370,11 @@ const stableMs = nowMs - t0
                             return
                           }
 
-                          // ✅ Clic ES/FR manuel :
-                          // - on change l’affichage
-                          // - MAIS on ne désarme jamais AUTO (il reste prêt pour Figueres)
+                          // ✅ Clic ES/FR manuel = on sort du mode AUTO
+                          setAutoEngaged(false)
                           setFtViewMode(mode)
-                          logTestEvent('ui:ftViewMode:change', {
-                            mode,
-                            source: 'titlebar',
-                            autoEngaged: autoEngaged,
-                          })
+                          logTestEvent('ui:ftViewMode:change', { mode, source: 'titlebar' })
                         }}
-
                         className={
                           'px-3 text-xs font-semibold ' +
                           (showAutoActive ? 'ring-2 ring-inset ring-emerald-500 dark:ring-emerald-400 ' : '') +

@@ -2485,9 +2485,9 @@ const isRelock = acceptedMode === "relock";
           stationProxKm: STATION_PROX_KM,
         });
 
-        // ✅ log dédié : entrée en RED provoquée par PK incohérent
-        if (enteredRedFromPkIncoherent) {
-          logTestEvent("gps:red:pk-incoherent", {
+        // ✅ log dédié : entrée en ORANGE provoquée par PK incohérent
+        if (enteredOrangeFromPkIncoherent) {
+          logTestEvent("gps:orange:pk-incoherent", {
             pkRaw: pkRaw ?? null,
             pkUsed: typeof pk === "number" && Number.isFinite(pk) ? pk : null,
             pkJumpSuspect,
