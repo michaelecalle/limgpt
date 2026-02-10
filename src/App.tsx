@@ -1,6 +1,6 @@
 // src/App.tsx
 // DEV ONLY — Sniffer des events écoutés via window.addEventListener
-(() => {
+;(() => {
   const w = window as any;
   if (w.__limgptSnifferInstalled) return;
   w.__limgptSnifferInstalled = true;
@@ -23,28 +23,9 @@
 
   console.log("[limgpt] addEventListener sniffer installed");
 })();
+
 // DEV ONLY — Sniffer des events dispatchés
-(() => {
-  const w = window as any;
-  if (w.__limgptDispatchSnifferInstalled) return;
-  w.__limgptDispatchSnifferInstalled = true;
-
-  const original = window.dispatchEvent.bind(window);
-  const seen = new Map<string, number>();
-
-  window.dispatchEvent = ((evt: Event) => {
-    const t = (evt as any)?.type ? String((evt as any).type) : "unknown";
-    seen.set(t, (seen.get(t) ?? 0) + 1);
-    w.__limgptDispatched = Object.fromEntries(seen.entries());
-
-    if (t.includes(":")) console.log("[dispatch]", t, (evt as any).detail ?? "");
-    return original(evt);
-  }) as any;
-
-  console.log("[limgpt] dispatchEvent sniffer installed");
-})();
-// DEV ONLY — Sniffer des events dispatchés
-(() => {
+;(() => {
   const w = window as any;
   if (w.__limgptDispatchSnifferInstalled) return;
   w.__limgptDispatchSnifferInstalled = true;
@@ -66,12 +47,12 @@
 
 
 import "./lib/ltvParser"
+
 import "./lib/redPdfParser"
 import "./lib/limParser"
 import "./lib/ftParser"
 import React from "react"
 import FTFrance from "./components/LIM/FTFrance"
-
 
 import TitleBar from "./components/LIM/TitleBar"
 import Infos from "./components/LIM/Infos"
@@ -106,7 +87,9 @@ export default function App() {
 
   // ✅ Toast "mise à jour" (déclenché si APP_VERSION change)
   const [updateToastOpen, setUpdateToastOpen] = React.useState(false)
-  const [updatePrevVersion, setUpdatePrevVersion] = React.useState<string | null>(null)
+  const [updatePrevVersion, setUpdatePrevVersion] = React.useState<string | null>(
+    null
+  )
 
   React.useEffect(() => {
     try {
@@ -136,11 +119,15 @@ export default function App() {
   const [ftViewMode, setFtViewMode] = React.useState<FtViewMode>("ES")
   const [trainNumber, setTrainNumber] = React.useState<number | null>(null)
 
-    // ============================================================
+  // ============================================================
   // Heures Figueres (publiées par la FT Espagne via event)
   // ============================================================
-  const [figueresDepartureHhmm, setFigueresDepartureHhmm] = React.useState<string | null>(null)
-  const [figueresArrivalHhmm, setFigueresArrivalHhmm] = React.useState<string | null>(null)
+  const [figueresDepartureHhmm, setFigueresDepartureHhmm] = React.useState<
+    string | null
+  >(null)
+  const [figueresArrivalHhmm, setFigueresArrivalHhmm] = React.useState<
+    string | null
+  >(null)
 
   React.useEffect(() => {
     const onFigueres = (e: Event) => {
@@ -159,7 +146,10 @@ export default function App() {
 
     window.addEventListener("ft:figueres-hhmm", onFigueres as EventListener)
     return () =>
-      window.removeEventListener("ft:figueres-hhmm", onFigueres as EventListener)
+      window.removeEventListener(
+        "ft:figueres-hhmm",
+        onFigueres as EventListener
+      )
   }, [])
 
   // Critère "FT France disponible" (déjà en place : whitelist par n° de train)
@@ -176,7 +166,10 @@ export default function App() {
     }
     window.addEventListener("ft:view-mode-change", handler as EventListener)
     return () =>
-      window.removeEventListener("ft:view-mode-change", handler as EventListener)
+      window.removeEventListener(
+        "ft:view-mode-change",
+        handler as EventListener
+      )
   }, [])
 
   React.useEffect(() => {
@@ -184,7 +177,7 @@ export default function App() {
       const ce = e as CustomEvent
       const raw = ce?.detail?.trainNumber
       const n = typeof raw === "number" ? raw : parseInt(String(raw ?? ""), 10)
-            console.log("[TRAIN_EVT]", (e as any)?.type, { raw, n })
+      console.log("[TRAIN_EVT]", (e as any)?.type, { raw, n })
 
       if (!Number.isNaN(n)) setTrainNumber(n)
     }
@@ -218,12 +211,34 @@ export default function App() {
     const measure = () => {
       const el = ftAreaRef.current
       if (!el) return
+
       const r = el.getBoundingClientRect()
+
+      // DIAG : on trace la source de vérité de la taille/position
+      console.log("[FTFR][measure]", {
+        pdfMode,
+        foldInfosLtv,
+        showFtFranceOverlay,
+        ftArea: {
+          top: Math.round(r.top),
+          left: Math.round(r.left),
+          width: Math.round(r.width),
+          height: Math.round(r.height),
+        },
+      })
+
       setFtAreaRect({ top: r.top, left: r.left, width: r.width })
     }
 
+
+    // ✅ mesure immédiate
     measure()
-    const raf = window.requestAnimationFrame(measure)
+
+    // ✅ double RAF : sécurise les changements de layout (pliage/dépliage, fonts, etc.)
+    const raf1 = window.requestAnimationFrame(() => {
+      measure()
+      window.requestAnimationFrame(measure)
+    })
 
     window.addEventListener("resize", measure)
     window.addEventListener("orientationchange", measure)
@@ -233,13 +248,14 @@ export default function App() {
     vv?.addEventListener("scroll", measure)
 
     return () => {
-      window.cancelAnimationFrame(raf)
+      window.cancelAnimationFrame(raf1)
       window.removeEventListener("resize", measure)
       window.removeEventListener("orientationchange", measure)
       vv?.removeEventListener("resize", measure)
       vv?.removeEventListener("scroll", measure)
     }
-  }, [showFtFranceOverlay])
+    // ✅ IMPORTANT : re-mesure quand on plie/déplie et quand on revient en vert
+  }, [showFtFranceOverlay, foldInfosLtv, pdfMode])
 
   // ✅ Sécurité (ceinture & bretelles) :
   // si train non éligible FT France => forcer ADIF (ES), même si un event UI tente FR/AUTO
@@ -257,7 +273,6 @@ export default function App() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [trainNumber])
-
 
   // ============================================================
   // REPLAY BOOTSTRAP (sans UI) — expose un player dans la console
@@ -318,8 +333,6 @@ export default function App() {
     }
   }, [])
 
-
-
   // réception du PDF
   React.useEffect(() => {
     const handler = (e: Event) => {
@@ -328,15 +341,14 @@ export default function App() {
       if (file) {
         setRawPdfFile(file)
         console.log("[App] PDF brut reçu =", file)
-console.log("[APP_IMPORT_STATE]", {
-  ftViewMode,
-  trainNumber,
-  showFtFranceOverlay,
-})
+        console.log("[APP_IMPORT_STATE]", {
+          ftViewMode,
+          trainNumber,
+          showFtFranceOverlay,
+        })
 
-                // ✅ À chaque import PDF, on repart par défaut sur la FT Espagne (ADIF)
+        // ✅ À chaque import PDF, on repart par défaut sur la FT Espagne (ADIF)
         setFtViewMode("ES")
-
 
         // URL pour l'iframe (mode rouge sans images)
         const url = URL.createObjectURL(file)
@@ -364,6 +376,7 @@ console.log("[APP_IMPORT_STATE]", {
     return () => {
       window.removeEventListener("lim:import-pdf", handler as EventListener)
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   // changement de mode (blue/green/red)
@@ -475,10 +488,7 @@ console.log("[APP_IMPORT_STATE]", {
               </div>
             </div>
           </div>
-
         )}
-
-
 
         {/* MODE BLEU : rendu dédié */}
         {pdfMode === "blue" && (
@@ -537,8 +547,7 @@ console.log("[APP_IMPORT_STATE]", {
                 />
               ) : (
                 <div className="h-full flex items-center justify-center text-sm text-zinc-400 dark:text-zinc-500">
-                  Aucun PDF chargé. Importez un PDF puis passez en mode
-                  secours.
+                  Aucun PDF chargé. Importez un PDF puis passez en mode secours.
                 </div>
               )}
             </div>
@@ -553,48 +562,70 @@ console.log("[APP_IMPORT_STATE]", {
               : "mt-3 mx-auto max-w-7xl flex-1 min-h-0 flex flex-col hidden"
           }
         >
-          <div className={foldInfosLtv ? "hidden" : "block"}>
-            {/* Bloc infos */}
+          {/* Bloc infos (caché en mode plié) */}
+          {!foldInfosLtv && (
             <div className="mt-0">
               <Infos />
             </div>
+          )}
 
-            {/* Zone LTV + FT (overlay FT France possible) */}
-            <div ref={ftAreaRef} className="mt-3 flex-1 min-h-0 relative flex flex-col">
-              {/* Bloc LTV */}
-              <div className={foldInfosLtv ? "hidden" : "block"}>
-                <LTV />
-              </div>
+          {/* Zone LTV + FT (TOUJOURS rendue) */}
+          <div
+            ref={ftAreaRef}
+            className={
+              (foldInfosLtv ? "mt-0 " : "mt-3 ") +
+              "flex-1 min-h-0 relative flex flex-col"
+            }
+          >
+{/* Bloc LTV (TOUJOURS rendu — masqué visuellement si plié) */}
+<div
+  className={
+    foldInfosLtv
+      ? "block h-0 overflow-hidden pointer-events-none"
+      : "block"
+  }
+>
+  <LTV />
+</div>
 
-              {/* Bloc FT */}
+
+            {/* Bloc FT (toujours visible) */}
+            <div
+              className={
+                foldInfosLtv
+                  ? "mt-0 flex-1 min-h-0 h-full"
+                  : "mt-3 flex-1 min-h-0"
+              }
+            >
+              <FT />
+            </div>
+
+            {/* Overlay FT France (opaque) — fixé au viewport, top aligné sur la zone LTV/FT */}
+            {showFtFranceOverlay && ftAreaRect && (
               <div
                 className={
-                  foldInfosLtv
-                    ? "mt-0 flex-1 min-h-0 h-full"
-                    : "mt-3 flex-1 min-h-0"
+                  // ✅ IMPORTANT : flex + min-h-0 pour que FTFrance puisse prendre toute la hauteur
+                  "z-50 rounded-2xl border shadow-lg pointer-events-auto overflow-hidden flex flex-col " +
+                  (isDark
+                    ? "bg-zinc-950 border-zinc-800"
+                    : "bg-white border-zinc-200")
                 }
+                style={{
+                  position: "fixed",
+                  top: ftAreaRect.top,
+                  left: ftAreaRect.left,
+                  width: ftAreaRect.width,
+                  bottom: 0,
+                }}
               >
-                <FT />
-              </div>
-
-              {/* Overlay FT France (opaque) — fixé au viewport, top aligné sur la zone LTV/FT */}
-              {showFtFranceOverlay && ftAreaRect && (
                 <div
                   className={
-                    "z-50 rounded-2xl border shadow-lg pointer-events-auto overflow-hidden " +
-                    (isDark
-                      ? "bg-zinc-950 border-zinc-800"
-                      : "bg-white border-zinc-200")
+                    // ✅ IMPORTANT : flex-1 + min-h-0 => hauteur dispo réelle
+                    "h-full w-full p-3 flex flex-col min-h-0 " +
+                    (isDark ? "bg-zinc-950" : "bg-white")
                   }
-                  style={{
-                    position: "fixed",
-                    top: ftAreaRect.top,
-                    left: ftAreaRect.left,
-                    width: ftAreaRect.width,
-                    bottom: 0,
-                  }}
                 >
-                  <div className={"h-full w-full p-3 " + (isDark ? "bg-zinc-950" : "bg-white")}>
+                  <div className="flex-1 min-h-0">
                     <FTFrance
                       trainNumber={trainNumber}
                       figueresDepartureHhmm={figueresDepartureHhmm}
@@ -602,14 +633,14 @@ console.log("[APP_IMPORT_STATE]", {
                     />
                   </div>
                 </div>
-              )}
-
-
-
-            </div>
-          </div>
-        </div>
-      </div>
+              </div>
+            )}
+          </div>{" "}
+          {/* fin Zone LTV + FT */}
+        </div>{" "}
+        {/* fin MODE VERT */}
+      </div>{" "}
+      {/* fin conteneur principal */}
     </main>
   )
 }

@@ -66,11 +66,32 @@ export default function TitleBar() {
   const autoLockedRef = useRef(false)
   const autoInitialTargetRef = useRef<'ES' | 'FR' | null>(null)
 
-  useEffect(() => {
+useEffect(() => {
+  window.dispatchEvent(
+    new CustomEvent('ft:view-mode-change', { detail: { mode: ftViewMode } })
+  )
+}, [ftViewMode])
+
+// ⬇️ AJOUT ICI
+useEffect(() => {
+  if (ftViewMode === 'FR') {
+    setFolded(false)
+
     window.dispatchEvent(
-      new CustomEvent('ft:view-mode-change', { detail: { mode: ftViewMode } })
+      new CustomEvent('lim:infos-ltv-fold-change', {
+        detail: { folded: false },
+      })
     )
-  }, [ftViewMode])
+
+    logTestEvent('ui:infos-ltv:auto-unfold', {
+      reason: 'ftViewMode_FR',
+      source: 'titlebar',
+    })
+  }
+}, [ftViewMode])
+
+
+
 
   // =========================
   // AUTO resolve (pré-calage GPS post-parsing)
@@ -2060,6 +2081,16 @@ const stableMs = nowMs - t0
       : baseTitle
 
   const handleTitleClick = () => {
+    // ✅ Quand la FT France (LFP) est affichée, on désactive le pliage/dépliage
+    if (ftViewMode === 'FR') {
+      logTestEvent('ui:blocked', {
+        control: 'infosLtvFold',
+        source: 'titlebar',
+        reason: 'ftfrance_active',
+      })
+      return
+    }
+
     if (simulationEnabled) {
       logTestEvent('ui:blocked', {
         control: 'infosLtvFold',
@@ -2084,6 +2115,7 @@ const stableMs = nowMs - t0
       return next
     })
   }
+
 
   const IconSun = () => (
     <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" className="opacity-80">
