@@ -568,7 +568,7 @@ ${coords}
       }
 
       // ✅ Vitesse replay (1 = temps réel, 2 = 2x plus vite, etc.)
-      const SPEED = 60
+      const SPEED = 10
 
       const text = await file.text()
       const lines = text.split(/\r?\n/)
@@ -1532,6 +1532,16 @@ const stableMs = nowMs - t0
       const raw = detail.trenPadded ?? detail.tren
       const disp = toTitleNumber(raw)
       setTrainDisplay(disp)
+
+      // ✅ Publie aussi le train pour App/FT overlay (ne dépend plus d'Infos.tsx)
+if (disp) {
+  const n = parseInt(disp, 10)
+  if (Number.isFinite(n)) {
+    window.dispatchEvent(
+      new CustomEvent("lim:train-change", { detail: { trainNumber: n } })
+    )
+  }
+}
 
       // mise à jour du type (ex: T200)
       const rawType = (detail as any).type

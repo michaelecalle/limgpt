@@ -118,6 +118,7 @@ export default function App() {
   type FtViewMode = "AUTO" | "ES" | "FR"
   const [ftViewMode, setFtViewMode] = React.useState<FtViewMode>("ES")
   const [trainNumber, setTrainNumber] = React.useState<number | null>(null)
+  const lastTrainNumberRef = React.useRef<number | null>(null)
 
   // ============================================================
   // Heures Figueres (publiées par la FT Espagne via event)
@@ -128,6 +129,43 @@ export default function App() {
   const [figueresArrivalHhmm, setFigueresArrivalHhmm] = React.useState<
     string | null
   >(null)
+  // ============================================================
+  // FT France : état de référence + état GPS (reçus via events)
+  // ============================================================
+  type ReferenceMode = "HORAIRE" | "GPS"
+  type GpsStateUi = "RED" | "ORANGE" | "GREEN"
+
+  const [ftReferenceMode, setFtReferenceMode] =
+    React.useState<ReferenceMode>("HORAIRE")
+  const [gpsStateUi, setGpsStateUi] = React.useState<GpsStateUi>("RED")
+  const [gpsPkForUi, setGpsPkForUi] = React.useState<number | null>(null)
+
+  React.useEffect(() => {
+    const onRef = (e: Event) => {
+      const ce = e as CustomEvent
+      const mode = (ce as any)?.detail?.mode
+      if (mode === "HORAIRE" || mode === "GPS") setFtReferenceMode(mode)
+    }
+
+    const onGpsState = (e: Event) => {
+      const ce = e as CustomEvent<any>
+      const s = ce?.detail?.state as GpsStateUi | undefined
+      const pk = ce?.detail?.pk
+
+      if (s === "RED" || s === "ORANGE" || s === "GREEN") {
+        setGpsStateUi(s)
+        setGpsPkForUi(typeof pk === "number" && Number.isFinite(pk) ? pk : null)
+      }
+    }
+
+    window.addEventListener("lim:reference-mode", onRef as EventListener)
+    window.addEventListener("lim:gps-state", onGpsState as EventListener)
+
+    return () => {
+      window.removeEventListener("lim:reference-mode", onRef as EventListener)
+      window.removeEventListener("lim:gps-state", onGpsState as EventListener)
+    }
+  }, [])
 
   React.useEffect(() => {
     const onFigueres = (e: Event) => {
@@ -175,11 +213,24 @@ export default function App() {
   React.useEffect(() => {
     const readTrain = (e: Event) => {
       const ce = e as CustomEvent
-      const raw = ce?.detail?.trainNumber
+
+      const raw =
+        ce?.detail?.trainNumber ??
+        ce?.detail?.train ??
+        ce?.detail?.tren ??
+        ce?.detail?.trenPadded
+
       const n = typeof raw === "number" ? raw : parseInt(String(raw ?? ""), 10)
+
       console.log("[TRAIN_EVT]", (e as any)?.type, { raw, n })
 
-      if (!Number.isNaN(n)) setTrainNumber(n)
+      if (Number.isNaN(n)) return
+
+      // ✅ Dédupe : si on reçoit 10 fois le même train, on n'applique qu'une fois
+      if (lastTrainNumberRef.current === n) return
+      lastTrainNumberRef.current = n
+
+      setTrainNumber(n)
     }
 
     window.addEventListener("lim:train", readTrain as EventListener)
@@ -630,6 +681,9 @@ export default function App() {
                       trainNumber={trainNumber}
                       figueresDepartureHhmm={figueresDepartureHhmm}
                       figueresArrivalHhmm={figueresArrivalHhmm}
+                      referenceMode={ftReferenceMode}
+                      gpsStateUi={gpsStateUi}
+                      gpsPk={gpsPkForUi}
                     />
                   </div>
                 </div>

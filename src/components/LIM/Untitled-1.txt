@@ -1,0 +1,9 @@
+✅ 47 → 75 : réception lim:gps-state (UI + sync du mode)
+
+✅ 619 → 819 : moteur de position trainPosYpx (interpolation GPS / Horaire)
+
+✅ 826 → 1086 : watchdog GPS (réévaluation état + dispatch)
+
+✅ 1090 → 1137 : réglages GPS (constantes + timers ORANGE→RED)
+
+✅ 1971 → 2875 : handler gps:position (machine d’états principale)
