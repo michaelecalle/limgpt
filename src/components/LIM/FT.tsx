@@ -1624,19 +1624,29 @@ const computeFixedDelay = (now: Date, ftMinutes: number) => {
     const nowMin = now.getHours() * 60 + now.getMinutes();
     const nowMinFloat = nowMin + now.getSeconds() / 60;
 
-    // 1) Priorité : lire l'heure directement dans le DOM de la ligne cliquée
-    // (fonctionne aussi pour les lignes FR si elles affichent .ft-hora-theo / .ft-hora-depart)
+    // ✅ En reprise de standby, on force la base sur la ligne qui a réellement
+    // déclenché l'entrée en standby (et non sur un éventuel clic parasite de reprise)
+    const lockedRowIndex =
+      standbyLockedRowRef.current != null && Number.isFinite(standbyLockedRowRef.current)
+        ? standbyLockedRowRef.current
+        : rowIndex;
+
+    // 1) Priorité : lire l'heure directement dans le DOM de la ligne verrouillée
     let rowMin: number | null = null;
     const container = scrollContainerRef.current;
 
     if (container) {
       const tr = container.querySelector<HTMLTableRowElement>(
-        `tr.ft-row-main[data-ft-row="${rowIndex}"]`
+        `tr.ft-row-main[data-ft-row="${lockedRowIndex}"]`
       );
 
       if (tr) {
-        const dep = tr.querySelector<HTMLSpanElement>("td:nth-child(6) .ft-hora-depart");
-        const theo = tr.querySelector<HTMLSpanElement>("td:nth-child(6) .ft-hora-theo");
+        const dep = tr.querySelector<HTMLSpanElement>(
+          "td:nth-child(6) .ft-hora-depart"
+        );
+        const theo = tr.querySelector<HTMLSpanElement>(
+          "td:nth-child(6) .ft-hora-theo"
+        );
         const txt = ((dep?.textContent ?? theo?.textContent) ?? "").trim();
 
         const m = /^(\d{1,2}):(\d{2})(?::(\d{2}))?$/.exec(txt);
@@ -1645,22 +1655,29 @@ const computeFixedDelay = (now: Date, ftMinutes: number) => {
           const mm = Number(m[2]);
           const ss = m[3] != null ? Number(m[3]) : 0;
 
-          if (Number.isFinite(hh) && Number.isFinite(mm) && Number.isFinite(ss)) {
+          if (
+            Number.isFinite(hh) &&
+            Number.isFinite(mm) &&
+            Number.isFinite(ss)
+          ) {
             rowMin = hh * 60 + mm + ss / 60;
           }
         }
       }
     }
 
-    // 2) Fallback : ancienne logique (utile si DOM pas prêt / pas d'heure affichée)
+    // 2) Fallback : horaire théorique interne sur la ligne verrouillée
     if (rowMin == null) {
-      const v = horaTheoMinutesByIndex[rowIndex];
-      if (typeof v === "number" && Number.isFinite(v)) rowMin = v;
+      const v = horaTheoMinutesByIndex[lockedRowIndex];
+      if (typeof v === "number" && Number.isFinite(v)) {
+        rowMin = v;
+      }
     }
 
     if (rowMin == null) return null;
 
     const { fixedDelayMin: fixedDelay, deltaSec } = computeFixedDelay(now, rowMin);
+
     return {
       realMinInt: nowMin,
       realMinFloat: nowMinFloat,
@@ -1669,8 +1686,6 @@ const computeFixedDelay = (now: Date, ftMinutes: number) => {
       deltaSec,
     };
   };
-
-
 
     // ✅ Choix de la base : soit ligne sélectionnée (Standby), soit première ligne
     const forcedIndex = recalibrateFromRowRef.current;
@@ -1976,8 +1991,10 @@ const computeFixedDelay = (now: Date, ftMinutes: number) => {
   // on ajuste le scroll pour rapprocher la ligne active de la ligne rouge
   // (on autorise désormais le scroll à monter OU descendre),
   // quel que soit le mode de référence (HORAIRE ou GPS).
-  useEffect(() => {
-    if (!autoScrollEnabled) return;
+useEffect(() => {
+    // ✅ En GPS, on autorise aussi le recentrage auto même si autoScrollEnabled est faux
+    // (sinon la ligne active suit le PK, mais le viewport ne suit pas).
+    if (!autoScrollEnabled && referenceMode !== "GPS") return;
     if (activeRowIndex == null) return;
 
     const container = scrollContainerRef.current;
@@ -2351,14 +2368,42 @@ function findRowIndexFromPk(targetPk: number | null): number | null {
   if (gpsFictif == null) return null;
 
   // ------------------------------------------------------------------
-  // Recherche : dernière ligne atteinte (fictif_row <= gpsFictif)
+  // Recherche : dernière ligne atteinte (sens du tableau détecté automatiquement)
+  // - si u augmente avec i : on prend la dernière ligne telle que u <= gpsFictif
+  // - si u diminue avec i : on prend la dernière ligne telle que u >= gpsFictif
   // ------------------------------------------------------------------
   let candidateIndex: number | null = null;
+
+  // Détecter le sens global du tableau (u croissant ou décroissant)
+  let firstU: number | null = null;
+  let lastU: number | null = null;
 
   for (let i = 0; i < rawEntries.length; i++) {
     const u = getRowPkFictif(rawEntries[i] as any);
     if (u == null) continue;
-    if (u <= gpsFictif) candidateIndex = i;
+    firstU = u;
+    break;
+  }
+
+  for (let i = rawEntries.length - 1; i >= 0; i--) {
+    const u = getRowPkFictif(rawEntries[i] as any);
+    if (u == null) continue;
+    lastU = u;
+    break;
+  }
+
+  const isIncreasing =
+    firstU != null && lastU != null ? lastU >= firstU : true;
+
+  for (let i = 0; i < rawEntries.length; i++) {
+    const u = getRowPkFictif(rawEntries[i] as any);
+    if (u == null) continue;
+
+    if (isIncreasing) {
+      if (u <= gpsFictif) candidateIndex = i;
+    } else {
+      if (u >= gpsFictif) candidateIndex = i;
+    }
   }
 
   // fallback : plus proche en fictif
