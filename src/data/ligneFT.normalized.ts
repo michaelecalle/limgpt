@@ -6,7 +6,7 @@ export const LIGNE_FT_NORMALIZED: LigneFTNormalized = {
       {
         "id": "ns-data-0001",
         "type": "data",
-        "reseau": "ADIF",
+        "reseau": "",
         "pkInterne": "615.9",
         "pkAdif": "",
         "pkLfp": "",
@@ -17,12 +17,13 @@ export const LIGNE_FT_NORMALIZED: LigneFTNormalized = {
         "dependencia": "CAN TUNIS AV",
         "radio": "◯ GSMR",
         "rampCaract": "25",
+        "csv": false,
         "notes": []
       },
       {
         "id": "ns-data-0002",
         "type": "data",
-        "reseau": "ADIF",
+        "reseau": "",
         "pkInterne": "616.0",
         "pkAdif": "",
         "pkLfp": "",
@@ -33,12 +34,13 @@ export const LIGNE_FT_NORMALIZED: LigneFTNormalized = {
         "dependencia": "BIF CAN TUNIS AV",
         "radio": "◯ GSMR",
         "rampCaract": "25",
+        "csv": false,
         "notes": []
       },
       {
         "id": "ns-data-0003",
         "type": "data",
-        "reseau": "ADIF",
+        "reseau": "",
         "pkInterne": "618.1",
         "pkAdif": "",
         "pkLfp": "",
@@ -49,12 +51,13 @@ export const LIGNE_FT_NORMALIZED: LigneFTNormalized = {
         "dependencia": "",
         "radio": "◯ GSMR",
         "rampCaract": "25",
+        "csv": false,
         "notes": []
       },
       {
         "id": "ns-data-0004",
         "type": "data",
-        "reseau": "ADIF",
+        "reseau": "",
         "pkInterne": "619.9",
         "pkAdif": "",
         "pkLfp": "",
@@ -65,12 +68,13 @@ export const LIGNE_FT_NORMALIZED: LigneFTNormalized = {
         "dependencia": "",
         "radio": "◯ GSMR",
         "rampCaract": "25",
+        "csv": false,
         "notes": []
       },
       {
         "id": "ns-data-0005",
         "type": "data",
-        "reseau": "ADIF",
+        "reseau": "",
         "pkInterne": "620.2",
         "pkAdif": "",
         "pkLfp": "",
@@ -81,12 +85,13 @@ export const LIGNE_FT_NORMALIZED: LigneFTNormalized = {
         "dependencia": "",
         "radio": "◯ GSMR",
         "rampCaract": "25",
+        "csv": true,
         "notes": []
       },
       {
         "id": "ns-data-0006",
         "type": "data",
-        "reseau": "ADIF",
+        "reseau": "",
         "pkInterne": "621.0",
         "pkAdif": "",
         "pkLfp": "",
@@ -97,12 +102,13 @@ export const LIGNE_FT_NORMALIZED: LigneFTNormalized = {
         "dependencia": "BARCELONA SANTS",
         "radio": "◯ GSMR",
         "rampCaract": "28",
+        "csv": true,
         "notes": []
       },
       {
         "id": "ns-data-0007",
         "type": "data",
-        "reseau": "ADIF",
+        "reseau": "",
         "pkInterne": "621.7",
         "pkAdif": "",
         "pkLfp": "",
@@ -113,12 +119,13 @@ export const LIGNE_FT_NORMALIZED: LigneFTNormalized = {
         "dependencia": "",
         "radio": "◯ GSMR",
         "rampCaract": "28",
+        "csv": false,
         "notes": []
       },
       {
         "id": "ns-data-0008",
         "type": "data",
-        "reseau": "ADIF",
+        "reseau": "",
         "pkInterne": "623.8",
         "pkAdif": "",
         "pkLfp": "",
@@ -129,12 +136,13 @@ export const LIGNE_FT_NORMALIZED: LigneFTNormalized = {
         "dependencia": "",
         "radio": "◯ GSMR",
         "rampCaract": "28",
+        "csv": false,
         "notes": []
       },
       {
         "id": "ns-data-0009",
         "type": "data",
-        "reseau": "ADIF",
+        "reseau": "",
         "pkInterne": "624.3",
         "pkAdif": "",
         "pkLfp": "",
@@ -145,12 +153,13 @@ export const LIGNE_FT_NORMALIZED: LigneFTNormalized = {
         "dependencia": "",
         "radio": "◯ GSMR",
         "rampCaract": "28",
+        "csv": false,
         "notes": []
       },
       {
         "id": "ns-data-0010",
         "type": "data",
-        "reseau": "ADIF",
+        "reseau": "",
         "pkInterne": "626.7",
         "pkAdif": "",
         "pkLfp": "",
@@ -161,12 +170,13 @@ export const LIGNE_FT_NORMALIZED: LigneFTNormalized = {
         "dependencia": "",
         "radio": "◯ GSMR",
         "rampCaract": "28",
+        "csv": true,
         "notes": []
       },
       {
         "id": "ns-note-0011",
         "type": "note",
-        "reseau": "ADIF",
+        "reseau": "",
         "pkInterne": "",
         "pkAdif": "",
         "pkLfp": "",
@@ -177,6 +187,7 @@ export const LIGNE_FT_NORMALIZED: LigneFTNormalized = {
         "dependencia": "",
         "radio": "◯ GSMR",
         "rampCaract": "28",
+        "csv": false,
         "notes": [
           "35 VIAS ESTACIONAMM. V11, V19 Y V10, V18"
         ]
@@ -184,7 +195,7 @@ export const LIGNE_FT_NORMALIZED: LigneFTNormalized = {
       {
         "id": "ns-data-0012",
         "type": "data",
-        "reseau": "ADIF",
+        "reseau": "",
         "pkInterne": "627.7",
         "pkAdif": "",
         "pkLfp": "",
@@ -195,12 +206,13 @@ export const LIGNE_FT_NORMALIZED: LigneFTNormalized = {
         "dependencia": "LA SAGRERA AV",
         "radio": "◯ GSMR",
         "rampCaract": "28",
+        "csv": true,
         "notes": []
       },
       {
         "id": "ns-data-0013",
         "type": "data",
-        "reseau": "ADIF",
+        "reseau": "",
         "pkInterne": "629.4",
         "pkAdif": "",
         "pkLfp": "",
@@ -211,12 +223,13 @@ export const LIGNE_FT_NORMALIZED: LigneFTNormalized = {
         "dependencia": "",
         "radio": "◯ GSMR",
         "rampCaract": "28",
+        "csv": false,
         "notes": []
       },
       {
         "id": "ns-data-0014",
         "type": "data",
-        "reseau": "ADIF",
+        "reseau": "",
         "pkInterne": "630.7",
         "pkAdif": "",
         "pkLfp": "",
@@ -227,12 +240,13 @@ export const LIGNE_FT_NORMALIZED: LigneFTNormalized = {
         "dependencia": "",
         "radio": "◯ GSMR",
         "rampCaract": "28",
+        "csv": false,
         "notes": []
       },
       {
         "id": "ns-data-0015",
         "type": "data",
-        "reseau": "ADIF",
+        "reseau": "",
         "pkInterne": "632.4",
         "pkAdif": "",
         "pkLfp": "",
@@ -243,12 +257,13 @@ export const LIGNE_FT_NORMALIZED: LigneFTNormalized = {
         "dependencia": "",
         "radio": "◯ GSMR",
         "rampCaract": "28",
+        "csv": false,
         "notes": []
       },
       {
         "id": "ns-data-0016",
         "type": "data",
-        "reseau": "ADIF",
+        "reseau": "",
         "pkInterne": "634.5",
         "pkAdif": "",
         "pkLfp": "",
@@ -259,12 +274,13 @@ export const LIGNE_FT_NORMALIZED: LigneFTNormalized = {
         "dependencia": "",
         "radio": "◯ GSMR",
         "rampCaract": "28",
+        "csv": false,
         "notes": []
       },
       {
         "id": "ns-data-0017",
         "type": "data",
-        "reseau": "ADIF",
+        "reseau": "",
         "pkInterne": "636.6",
         "pkAdif": "",
         "pkLfp": "",
@@ -275,12 +291,13 @@ export const LIGNE_FT_NORMALIZED: LigneFTNormalized = {
         "dependencia": "",
         "radio": "◯ GSMR",
         "rampCaract": "28",
+        "csv": false,
         "notes": []
       },
       {
         "id": "ns-data-0018",
         "type": "data",
-        "reseau": "ADIF",
+        "reseau": "",
         "pkInterne": "639.8",
         "pkAdif": "",
         "pkLfp": "",
@@ -291,12 +308,13 @@ export const LIGNE_FT_NORMALIZED: LigneFTNormalized = {
         "dependencia": "",
         "radio": "◯ GSMR",
         "rampCaract": "28",
+        "csv": false,
         "notes": []
       },
       {
         "id": "ns-data-0019",
         "type": "data",
-        "reseau": "ADIF",
+        "reseau": "",
         "pkInterne": "640.9",
         "pkAdif": "",
         "pkLfp": "",
@@ -307,12 +325,13 @@ export const LIGNE_FT_NORMALIZED: LigneFTNormalized = {
         "dependencia": "BIF. MOLLET",
         "radio": "◯ GSMR",
         "rampCaract": "28",
+        "csv": false,
         "notes": []
       },
       {
         "id": "ns-data-0020",
         "type": "data",
-        "reseau": "ADIF",
+        "reseau": "",
         "pkInterne": "641.3",
         "pkAdif": "",
         "pkLfp": "",
@@ -323,12 +342,13 @@ export const LIGNE_FT_NORMALIZED: LigneFTNormalized = {
         "dependencia": "BIF. MOLLET-AGUJA KM. 641,3",
         "radio": "◯ GSMR",
         "rampCaract": "18",
+        "csv": false,
         "notes": []
       },
       {
         "id": "ns-data-0021",
         "type": "data",
-        "reseau": "ADIF",
+        "reseau": "",
         "pkInterne": "641.9",
         "pkAdif": "",
         "pkLfp": "",
@@ -339,12 +359,13 @@ export const LIGNE_FT_NORMALIZED: LigneFTNormalized = {
         "dependencia": "",
         "radio": "◯ GSMR",
         "rampCaract": "18",
+        "csv": false,
         "notes": []
       },
       {
         "id": "ns-data-0022",
         "type": "data",
-        "reseau": "ADIF",
+        "reseau": "",
         "pkInterne": "643.6",
         "pkAdif": "",
         "pkLfp": "",
@@ -355,12 +376,13 @@ export const LIGNE_FT_NORMALIZED: LigneFTNormalized = {
         "dependencia": "",
         "radio": "◯ GSMR",
         "rampCaract": "18",
+        "csv": false,
         "notes": []
       },
       {
         "id": "ns-data-0023",
         "type": "data",
-        "reseau": "ADIF",
+        "reseau": "",
         "pkInterne": "644.3",
         "pkAdif": "",
         "pkLfp": "",
@@ -371,12 +393,13 @@ export const LIGNE_FT_NORMALIZED: LigneFTNormalized = {
         "dependencia": "BIF. MOLLET-AG.KM. 644.3",
         "radio": "◯ GSMR",
         "rampCaract": "18",
+        "csv": false,
         "notes": []
       },
       {
         "id": "ns-data-0024",
         "type": "data",
-        "reseau": "ADIF",
+        "reseau": "",
         "pkInterne": "654.4",
         "pkAdif": "",
         "pkLfp": "",
@@ -387,12 +410,13 @@ export const LIGNE_FT_NORMALIZED: LigneFTNormalized = {
         "dependencia": "",
         "radio": "◯ GSMR",
         "rampCaract": "18",
+        "csv": false,
         "notes": []
       },
       {
         "id": "ns-data-0025",
         "type": "data",
-        "reseau": "ADIF",
+        "reseau": "",
         "pkInterne": "655.6",
         "pkAdif": "",
         "pkLfp": "",
@@ -403,12 +427,13 @@ export const LIGNE_FT_NORMALIZED: LigneFTNormalized = {
         "dependencia": "",
         "radio": "◯ GSMR",
         "rampCaract": "18",
+        "csv": false,
         "notes": []
       },
       {
         "id": "ns-data-0026",
         "type": "data",
-        "reseau": "ADIF",
+        "reseau": "",
         "pkInterne": "655.8",
         "pkAdif": "",
         "pkLfp": "",
@@ -419,12 +444,13 @@ export const LIGNE_FT_NORMALIZED: LigneFTNormalized = {
         "dependencia": "",
         "radio": "◯ GSMR",
         "rampCaract": "18",
+        "csv": false,
         "notes": []
       },
       {
         "id": "ns-data-0027",
         "type": "data",
-        "reseau": "ADIF",
+        "reseau": "",
         "pkInterne": "660.8",
         "pkAdif": "",
         "pkLfp": "",
@@ -435,12 +461,13 @@ export const LIGNE_FT_NORMALIZED: LigneFTNormalized = {
         "dependencia": "",
         "radio": "◯ GSMR",
         "rampCaract": "18",
+        "csv": false,
         "notes": []
       },
       {
         "id": "ns-data-0028",
         "type": "data",
-        "reseau": "ADIF",
+        "reseau": "",
         "pkInterne": "661.5",
         "pkAdif": "",
         "pkLfp": "",
@@ -451,12 +478,13 @@ export const LIGNE_FT_NORMALIZED: LigneFTNormalized = {
         "dependencia": "",
         "radio": "◯ GSMR",
         "rampCaract": "18",
+        "csv": false,
         "notes": []
       },
       {
         "id": "ns-data-0029",
         "type": "data",
-        "reseau": "ADIF",
+        "reseau": "",
         "pkInterne": "662.0",
         "pkAdif": "",
         "pkLfp": "",
@@ -467,12 +495,13 @@ export const LIGNE_FT_NORMALIZED: LigneFTNormalized = {
         "dependencia": "",
         "radio": "◯ GSMR",
         "rampCaract": "18",
+        "csv": false,
         "notes": []
       },
       {
         "id": "ns-data-0030",
         "type": "data",
-        "reseau": "ADIF",
+        "reseau": "",
         "pkInterne": "662.5",
         "pkAdif": "",
         "pkLfp": "",
@@ -483,12 +512,13 @@ export const LIGNE_FT_NORMALIZED: LigneFTNormalized = {
         "dependencia": "LLINARS-A. V",
         "radio": "◯ GSMR",
         "rampCaract": "18",
+        "csv": false,
         "notes": []
       },
       {
         "id": "ns-data-0031",
         "type": "data",
-        "reseau": "ADIF",
+        "reseau": "",
         "pkInterne": "673.5",
         "pkAdif": "",
         "pkLfp": "",
@@ -499,12 +529,13 @@ export const LIGNE_FT_NORMALIZED: LigneFTNormalized = {
         "dependencia": "",
         "radio": "◯ GSMR",
         "rampCaract": "18",
+        "csv": false,
         "notes": []
       },
       {
         "id": "ns-data-0032",
         "type": "data",
-        "reseau": "ADIF",
+        "reseau": "",
         "pkInterne": "679.3",
         "pkAdif": "",
         "pkLfp": "",
@@ -515,12 +546,13 @@ export const LIGNE_FT_NORMALIZED: LigneFTNormalized = {
         "dependencia": "RIELLS-A. V",
         "radio": "◯ GSMR",
         "rampCaract": "18",
+        "csv": false,
         "notes": []
       },
       {
         "id": "ns-data-0033",
         "type": "data",
-        "reseau": "ADIF",
+        "reseau": "",
         "pkInterne": "680.2",
         "pkAdif": "",
         "pkLfp": "",
@@ -531,12 +563,13 @@ export const LIGNE_FT_NORMALIZED: LigneFTNormalized = {
         "dependencia": "",
         "radio": "◯ GSMR",
         "rampCaract": "18",
+        "csv": false,
         "notes": []
       },
       {
         "id": "ns-data-0034",
         "type": "data",
-        "reseau": "ADIF",
+        "reseau": "",
         "pkInterne": "682.0",
         "pkAdif": "",
         "pkLfp": "",
@@ -547,12 +580,13 @@ export const LIGNE_FT_NORMALIZED: LigneFTNormalized = {
         "dependencia": "BASE MTO. RIELLS",
         "radio": "◯ GSMR",
         "rampCaract": "18",
+        "csv": false,
         "notes": []
       },
       {
         "id": "ns-data-0035",
         "type": "data",
-        "reseau": "ADIF",
+        "reseau": "",
         "pkInterne": "684.0",
         "pkAdif": "",
         "pkLfp": "",
@@ -563,12 +597,13 @@ export const LIGNE_FT_NORMALIZED: LigneFTNormalized = {
         "dependencia": "",
         "radio": "◯ GSMR",
         "rampCaract": "18",
+        "csv": false,
         "notes": []
       },
       {
         "id": "ns-data-0036",
         "type": "data",
-        "reseau": "ADIF",
+        "reseau": "",
         "pkInterne": "703.5",
         "pkAdif": "",
         "pkLfp": "",
@@ -579,12 +614,13 @@ export const LIGNE_FT_NORMALIZED: LigneFTNormalized = {
         "dependencia": "VILOBI D'ONYAR",
         "radio": "◯ GSMR",
         "rampCaract": "18",
+        "csv": false,
         "notes": []
       },
       {
         "id": "ns-data-0037",
         "type": "data",
-        "reseau": "ADIF",
+        "reseau": "",
         "pkInterne": "707.1",
         "pkAdif": "",
         "pkLfp": "",
@@ -595,12 +631,13 @@ export const LIGNE_FT_NORMALIZED: LigneFTNormalized = {
         "dependencia": "",
         "radio": "◯ GSMR",
         "rampCaract": "18",
+        "csv": false,
         "notes": []
       },
       {
         "id": "ns-data-0038",
         "type": "data",
-        "reseau": "ADIF",
+        "reseau": "",
         "pkInterne": "709.9",
         "pkAdif": "",
         "pkLfp": "",
@@ -611,12 +648,13 @@ export const LIGNE_FT_NORMALIZED: LigneFTNormalized = {
         "dependencia": "",
         "radio": "◯ GSMR",
         "rampCaract": "18",
+        "csv": true,
         "notes": []
       },
       {
         "id": "ns-data-0039",
         "type": "data",
-        "reseau": "ADIF",
+        "reseau": "",
         "pkInterne": "710.7",
         "pkAdif": "",
         "pkLfp": "",
@@ -627,12 +665,13 @@ export const LIGNE_FT_NORMALIZED: LigneFTNormalized = {
         "dependencia": "BIF. GIRONA-MERCADERIES",
         "radio": "◯ GSMR",
         "rampCaract": "18",
+        "csv": true,
         "notes": []
       },
       {
         "id": "ns-data-0040",
         "type": "data",
-        "reseau": "ADIF",
+        "reseau": "",
         "pkInterne": "713.2",
         "pkAdif": "",
         "pkLfp": "",
@@ -643,12 +682,13 @@ export const LIGNE_FT_NORMALIZED: LigneFTNormalized = {
         "dependencia": "",
         "radio": "◯ GSMR",
         "rampCaract": "18",
+        "csv": false,
         "notes": []
       },
       {
         "id": "ns-data-0041",
         "type": "data",
-        "reseau": "ADIF",
+        "reseau": "",
         "pkInterne": "714.7",
         "pkAdif": "",
         "pkLfp": "",
@@ -659,12 +699,13 @@ export const LIGNE_FT_NORMALIZED: LigneFTNormalized = {
         "dependencia": "GIRONA",
         "radio": "◯ GSMR",
         "rampCaract": "18",
+        "csv": false,
         "notes": []
       },
       {
         "id": "ns-data-0042",
         "type": "data",
-        "reseau": "ADIF",
+        "reseau": "",
         "pkInterne": "715.5",
         "pkAdif": "",
         "pkLfp": "",
@@ -675,12 +716,13 @@ export const LIGNE_FT_NORMALIZED: LigneFTNormalized = {
         "dependencia": "",
         "radio": "◯ GSMR",
         "rampCaract": "18",
+        "csv": false,
         "notes": []
       },
       {
         "id": "ns-data-0043",
         "type": "data",
-        "reseau": "ADIF",
+        "reseau": "",
         "pkInterne": "716.8",
         "pkAdif": "",
         "pkLfp": "",
@@ -691,12 +733,13 @@ export const LIGNE_FT_NORMALIZED: LigneFTNormalized = {
         "dependencia": "",
         "radio": "◯ GSMR",
         "rampCaract": "18",
+        "csv": false,
         "notes": []
       },
       {
         "id": "ns-data-0044",
         "type": "data",
-        "reseau": "ADIF",
+        "reseau": "",
         "pkInterne": "720.0",
         "pkAdif": "",
         "pkLfp": "",
@@ -707,12 +750,13 @@ export const LIGNE_FT_NORMALIZED: LigneFTNormalized = {
         "dependencia": "",
         "radio": "◯ GSMR",
         "rampCaract": "18",
+        "csv": false,
         "notes": []
       },
       {
         "id": "ns-data-0045",
         "type": "data",
-        "reseau": "ADIF",
+        "reseau": "",
         "pkInterne": "723.7",
         "pkAdif": "",
         "pkLfp": "",
@@ -723,12 +767,13 @@ export const LIGNE_FT_NORMALIZED: LigneFTNormalized = {
         "dependencia": "",
         "radio": "◯ GSMR",
         "rampCaract": "18",
+        "csv": false,
         "notes": []
       },
       {
         "id": "ns-note-0046",
         "type": "note",
-        "reseau": "ADIF",
+        "reseau": "",
         "pkInterne": "",
         "pkAdif": "",
         "pkLfp": "",
@@ -739,6 +784,7 @@ export const LIGNE_FT_NORMALIZED: LigneFTNormalized = {
         "dependencia": "",
         "radio": "◯ GSMR",
         "rampCaract": "18",
+        "csv": false,
         "notes": [
           "80 AL PASO VIAS 3, 4 Y 6",
           "50 AL PASO VIA 7"
@@ -747,7 +793,7 @@ export const LIGNE_FT_NORMALIZED: LigneFTNormalized = {
       {
         "id": "ns-data-0047",
         "type": "data",
-        "reseau": "ADIF",
+        "reseau": "",
         "pkInterne": "749.6",
         "pkAdif": "",
         "pkLfp": "",
@@ -758,6 +804,7 @@ export const LIGNE_FT_NORMALIZED: LigneFTNormalized = {
         "dependencia": "FIGUERES-VILAFANT",
         "radio": "◯ GSMR",
         "rampCaract": "18",
+        "csv": false,
         "notes": []
       },
       {
@@ -768,12 +815,13 @@ export const LIGNE_FT_NORMALIZED: LigneFTNormalized = {
         "pkAdif": "752.4",
         "pkLfp": "44.4",
         "pkRfn": "",
-        "bloqueo": "ERTMS Niv. 1",
+        "bloqueo": "",
         "vmax": "200",
         "sitKm": "752.4",
         "dependencia": "LIMITE ADIF - LFPSA",
         "radio": "◯ GSMR",
         "rampCaract": "13",
+        "csv": false,
         "notes": []
       },
       {
@@ -790,6 +838,7 @@ export const LIGNE_FT_NORMALIZED: LigneFTNormalized = {
         "dependencia": "TETE SUD TUNNEL",
         "radio": "◯ GSMR",
         "rampCaract": "13",
+        "csv": false,
         "notes": []
       },
       {
@@ -806,6 +855,7 @@ export const LIGNE_FT_NORMALIZED: LigneFTNormalized = {
         "dependencia": "FRONTIERE",
         "radio": "◯ GSMR",
         "rampCaract": "13",
+        "csv": false,
         "notes": []
       },
       {
@@ -822,6 +872,7 @@ export const LIGNE_FT_NORMALIZED: LigneFTNormalized = {
         "dependencia": "TETE NORD TUNNEL",
         "radio": "◯ GSMR",
         "rampCaract": "18",
+        "csv": false,
         "notes": []
       },
       {
@@ -838,6 +889,7 @@ export const LIGNE_FT_NORMALIZED: LigneFTNormalized = {
         "dependencia": "SAUT DE MOUTON",
         "radio": "◯ GSMR",
         "rampCaract": "18",
+        "csv": false,
         "notes": []
       },
       {
@@ -848,12 +900,13 @@ export const LIGNE_FT_NORMALIZED: LigneFTNormalized = {
         "pkAdif": "",
         "pkLfp": "",
         "pkRfn": "473.3",
-        "bloqueo": "ERTMS Niv. 1",
+        "bloqueo": "",
         "vmax": "300",
         "sitKm": "799.7",
         "dependencia": "LIMITE RFN - LFPSA",
         "radio": "◯ GSMR",
         "rampCaract": "10",
+        "csv": false,
         "notes": []
       },
       {
@@ -870,6 +923,7 @@ export const LIGNE_FT_NORMALIZED: LigneFTNormalized = {
         "dependencia": "LIMITE RAC - LFP-FRR",
         "radio": "◯ GSMR",
         "rampCaract": "10",
+        "csv": false,
         "notes": []
       },
       {
@@ -886,6 +940,7 @@ export const LIGNE_FT_NORMALIZED: LigneFTNormalized = {
         "dependencia": "PERPIGNAN",
         "radio": "◯ GSMR",
         "rampCaract": "10",
+        "csv": false,
         "notes": []
       }
     ]
@@ -895,7 +950,7 @@ export const LIGNE_FT_NORMALIZED: LigneFTNormalized = {
       {
         "id": "sn-data-0001",
         "type": "data",
-        "reseau": "ADIF",
+        "reseau": "",
         "pkInterne": "615.9",
         "pkAdif": "",
         "pkLfp": "",
@@ -906,12 +961,13 @@ export const LIGNE_FT_NORMALIZED: LigneFTNormalized = {
         "dependencia": "CAN TUNIS AV",
         "radio": "◯ GSMR",
         "rampCaract": "25",
+        "csv": false,
         "notes": []
       },
       {
         "id": "sn-data-0002",
         "type": "data",
-        "reseau": "ADIF",
+        "reseau": "",
         "pkInterne": "616.0",
         "pkAdif": "",
         "pkLfp": "",
@@ -922,12 +978,13 @@ export const LIGNE_FT_NORMALIZED: LigneFTNormalized = {
         "dependencia": "BIF CAN TUNIS AV",
         "radio": "◯ GSMR",
         "rampCaract": "25",
+        "csv": false,
         "notes": []
       },
       {
         "id": "sn-data-0003",
         "type": "data",
-        "reseau": "ADIF",
+        "reseau": "",
         "pkInterne": "618.1",
         "pkAdif": "",
         "pkLfp": "",
@@ -938,12 +995,13 @@ export const LIGNE_FT_NORMALIZED: LigneFTNormalized = {
         "dependencia": "",
         "radio": "◯ GSMR",
         "rampCaract": "25",
+        "csv": false,
         "notes": []
       },
       {
         "id": "sn-data-0004",
         "type": "data",
-        "reseau": "ADIF",
+        "reseau": "",
         "pkInterne": "619.9",
         "pkAdif": "",
         "pkLfp": "",
@@ -954,12 +1012,13 @@ export const LIGNE_FT_NORMALIZED: LigneFTNormalized = {
         "dependencia": "",
         "radio": "◯ GSMR",
         "rampCaract": "25",
+        "csv": false,
         "notes": []
       },
       {
         "id": "sn-data-0005",
         "type": "data",
-        "reseau": "ADIF",
+        "reseau": "",
         "pkInterne": "620.2",
         "pkAdif": "",
         "pkLfp": "",
@@ -970,12 +1029,13 @@ export const LIGNE_FT_NORMALIZED: LigneFTNormalized = {
         "dependencia": "",
         "radio": "◯ GSMR",
         "rampCaract": "25",
+        "csv": true,
         "notes": []
       },
       {
         "id": "sn-data-0006",
         "type": "data",
-        "reseau": "ADIF",
+        "reseau": "",
         "pkInterne": "621.0",
         "pkAdif": "",
         "pkLfp": "",
@@ -986,12 +1046,13 @@ export const LIGNE_FT_NORMALIZED: LigneFTNormalized = {
         "dependencia": "BARCELONA SANTS",
         "radio": "◯ GSMR",
         "rampCaract": "28",
+        "csv": true,
         "notes": []
       },
       {
         "id": "sn-data-0007",
         "type": "data",
-        "reseau": "ADIF",
+        "reseau": "",
         "pkInterne": "621.7",
         "pkAdif": "",
         "pkLfp": "",
@@ -1002,12 +1063,13 @@ export const LIGNE_FT_NORMALIZED: LigneFTNormalized = {
         "dependencia": "",
         "radio": "◯ GSMR",
         "rampCaract": "28",
+        "csv": true,
         "notes": []
       },
       {
         "id": "sn-data-0008",
         "type": "data",
-        "reseau": "ADIF",
+        "reseau": "",
         "pkInterne": "623.8",
         "pkAdif": "",
         "pkLfp": "",
@@ -1018,12 +1080,13 @@ export const LIGNE_FT_NORMALIZED: LigneFTNormalized = {
         "dependencia": "",
         "radio": "◯ GSMR",
         "rampCaract": "28",
+        "csv": true,
         "notes": []
       },
       {
         "id": "sn-data-0009",
         "type": "data",
-        "reseau": "ADIF",
+        "reseau": "",
         "pkInterne": "624.3",
         "pkAdif": "",
         "pkLfp": "",
@@ -1034,12 +1097,13 @@ export const LIGNE_FT_NORMALIZED: LigneFTNormalized = {
         "dependencia": "",
         "radio": "◯ GSMR",
         "rampCaract": "28",
+        "csv": true,
         "notes": []
       },
       {
         "id": "sn-data-0010",
         "type": "data",
-        "reseau": "ADIF",
+        "reseau": "",
         "pkInterne": "626.7",
         "pkAdif": "",
         "pkLfp": "",
@@ -1050,12 +1114,13 @@ export const LIGNE_FT_NORMALIZED: LigneFTNormalized = {
         "dependencia": "",
         "radio": "◯ GSMR",
         "rampCaract": "28",
+        "csv": false,
         "notes": []
       },
       {
         "id": "sn-note-0011",
         "type": "note",
-        "reseau": "ADIF",
+        "reseau": "",
         "pkInterne": "",
         "pkAdif": "",
         "pkLfp": "",
@@ -1066,6 +1131,7 @@ export const LIGNE_FT_NORMALIZED: LigneFTNormalized = {
         "dependencia": "",
         "radio": "◯ GSMR",
         "rampCaract": "28",
+        "csv": false,
         "notes": [
           "35 VIAS ESTACIONAM. V11, V19 Y V10, V18"
         ]
@@ -1073,7 +1139,7 @@ export const LIGNE_FT_NORMALIZED: LigneFTNormalized = {
       {
         "id": "sn-data-0012",
         "type": "data",
-        "reseau": "ADIF",
+        "reseau": "",
         "pkInterne": "627.7",
         "pkAdif": "",
         "pkLfp": "",
@@ -1084,12 +1150,13 @@ export const LIGNE_FT_NORMALIZED: LigneFTNormalized = {
         "dependencia": "LA SAGRERA AV",
         "radio": "◯ GSMR",
         "rampCaract": "28",
+        "csv": true,
         "notes": []
       },
       {
         "id": "sn-data-0013",
         "type": "data",
-        "reseau": "ADIF",
+        "reseau": "",
         "pkInterne": "629.4",
         "pkAdif": "",
         "pkLfp": "",
@@ -1100,12 +1167,13 @@ export const LIGNE_FT_NORMALIZED: LigneFTNormalized = {
         "dependencia": "",
         "radio": "◯ GSMR",
         "rampCaract": "28",
+        "csv": true,
         "notes": []
       },
       {
         "id": "sn-data-0014",
         "type": "data",
-        "reseau": "ADIF",
+        "reseau": "",
         "pkInterne": "630.7",
         "pkAdif": "",
         "pkLfp": "",
@@ -1116,12 +1184,13 @@ export const LIGNE_FT_NORMALIZED: LigneFTNormalized = {
         "dependencia": "",
         "radio": "◯ GSMR",
         "rampCaract": "28",
+        "csv": true,
         "notes": []
       },
       {
         "id": "sn-data-0015",
         "type": "data",
-        "reseau": "ADIF",
+        "reseau": "",
         "pkInterne": "632.4",
         "pkAdif": "",
         "pkLfp": "",
@@ -1132,12 +1201,13 @@ export const LIGNE_FT_NORMALIZED: LigneFTNormalized = {
         "dependencia": "",
         "radio": "◯ GSMR",
         "rampCaract": "28",
+        "csv": true,
         "notes": []
       },
       {
         "id": "sn-data-0016",
         "type": "data",
-        "reseau": "ADIF",
+        "reseau": "",
         "pkInterne": "634.5",
         "pkAdif": "",
         "pkLfp": "",
@@ -1148,12 +1218,13 @@ export const LIGNE_FT_NORMALIZED: LigneFTNormalized = {
         "dependencia": "",
         "radio": "◯ GSMR",
         "rampCaract": "28",
+        "csv": false,
         "notes": []
       },
       {
         "id": "sn-data-0017",
         "type": "data",
-        "reseau": "ADIF",
+        "reseau": "",
         "pkInterne": "636.6",
         "pkAdif": "",
         "pkLfp": "",
@@ -1164,12 +1235,13 @@ export const LIGNE_FT_NORMALIZED: LigneFTNormalized = {
         "dependencia": "",
         "radio": "◯ GSMR",
         "rampCaract": "28",
+        "csv": false,
         "notes": []
       },
       {
         "id": "sn-data-0018",
         "type": "data",
-        "reseau": "ADIF",
+        "reseau": "",
         "pkInterne": "639.8",
         "pkAdif": "",
         "pkLfp": "",
@@ -1180,12 +1252,13 @@ export const LIGNE_FT_NORMALIZED: LigneFTNormalized = {
         "dependencia": "",
         "radio": "◯ GSMR",
         "rampCaract": "28",
+        "csv": false,
         "notes": []
       },
       {
         "id": "sn-data-0019",
         "type": "data",
-        "reseau": "ADIF",
+        "reseau": "",
         "pkInterne": "640.9",
         "pkAdif": "",
         "pkLfp": "",
@@ -1196,12 +1269,13 @@ export const LIGNE_FT_NORMALIZED: LigneFTNormalized = {
         "dependencia": "BIF. MOLLET",
         "radio": "◯ GSMR",
         "rampCaract": "28",
+        "csv": false,
         "notes": []
       },
       {
         "id": "sn-data-0020",
         "type": "data",
-        "reseau": "ADIF",
+        "reseau": "",
         "pkInterne": "641.3",
         "pkAdif": "",
         "pkLfp": "",
@@ -1212,12 +1286,13 @@ export const LIGNE_FT_NORMALIZED: LigneFTNormalized = {
         "dependencia": "BIF. MOLLET-AGUJA KM. 641,3",
         "radio": "◯ GSMR",
         "rampCaract": "18",
+        "csv": false,
         "notes": []
       },
       {
         "id": "sn-data-0021",
         "type": "data",
-        "reseau": "ADIF",
+        "reseau": "",
         "pkInterne": "641.9",
         "pkAdif": "",
         "pkLfp": "",
@@ -1228,12 +1303,13 @@ export const LIGNE_FT_NORMALIZED: LigneFTNormalized = {
         "dependencia": "",
         "radio": "◯ GSMR",
         "rampCaract": "18",
+        "csv": false,
         "notes": []
       },
       {
         "id": "sn-data-0022",
         "type": "data",
-        "reseau": "ADIF",
+        "reseau": "",
         "pkInterne": "643.6",
         "pkAdif": "",
         "pkLfp": "",
@@ -1244,12 +1320,13 @@ export const LIGNE_FT_NORMALIZED: LigneFTNormalized = {
         "dependencia": "",
         "radio": "◯ GSMR",
         "rampCaract": "18",
+        "csv": false,
         "notes": []
       },
       {
         "id": "sn-data-0023",
         "type": "data",
-        "reseau": "ADIF",
+        "reseau": "",
         "pkInterne": "644.3",
         "pkAdif": "",
         "pkLfp": "",
@@ -1260,12 +1337,13 @@ export const LIGNE_FT_NORMALIZED: LigneFTNormalized = {
         "dependencia": "BIF. MOLLET-AG.KM. 644.3",
         "radio": "◯ GSMR",
         "rampCaract": "18",
+        "csv": false,
         "notes": []
       },
       {
         "id": "sn-data-0024",
         "type": "data",
-        "reseau": "ADIF",
+        "reseau": "",
         "pkInterne": "654.4",
         "pkAdif": "",
         "pkLfp": "",
@@ -1276,12 +1354,13 @@ export const LIGNE_FT_NORMALIZED: LigneFTNormalized = {
         "dependencia": "",
         "radio": "◯ GSMR",
         "rampCaract": "18",
+        "csv": false,
         "notes": []
       },
       {
         "id": "sn-data-0025",
         "type": "data",
-        "reseau": "ADIF",
+        "reseau": "",
         "pkInterne": "655.6",
         "pkAdif": "",
         "pkLfp": "",
@@ -1292,12 +1371,13 @@ export const LIGNE_FT_NORMALIZED: LigneFTNormalized = {
         "dependencia": "",
         "radio": "◯ GSMR",
         "rampCaract": "18",
+        "csv": false,
         "notes": []
       },
       {
         "id": "sn-data-0026",
         "type": "data",
-        "reseau": "ADIF",
+        "reseau": "",
         "pkInterne": "655.8",
         "pkAdif": "",
         "pkLfp": "",
@@ -1308,12 +1388,13 @@ export const LIGNE_FT_NORMALIZED: LigneFTNormalized = {
         "dependencia": "",
         "radio": "◯ GSMR",
         "rampCaract": "18",
+        "csv": false,
         "notes": []
       },
       {
         "id": "sn-data-0027",
         "type": "data",
-        "reseau": "ADIF",
+        "reseau": "",
         "pkInterne": "660.8",
         "pkAdif": "",
         "pkLfp": "",
@@ -1324,12 +1405,13 @@ export const LIGNE_FT_NORMALIZED: LigneFTNormalized = {
         "dependencia": "",
         "radio": "◯ GSMR",
         "rampCaract": "18",
+        "csv": false,
         "notes": []
       },
       {
         "id": "sn-data-0028",
         "type": "data",
-        "reseau": "ADIF",
+        "reseau": "",
         "pkInterne": "661.5",
         "pkAdif": "",
         "pkLfp": "",
@@ -1340,12 +1422,13 @@ export const LIGNE_FT_NORMALIZED: LigneFTNormalized = {
         "dependencia": "",
         "radio": "◯ GSMR",
         "rampCaract": "18",
+        "csv": false,
         "notes": []
       },
       {
         "id": "sn-data-0029",
         "type": "data",
-        "reseau": "ADIF",
+        "reseau": "",
         "pkInterne": "662.0",
         "pkAdif": "",
         "pkLfp": "",
@@ -1356,12 +1439,13 @@ export const LIGNE_FT_NORMALIZED: LigneFTNormalized = {
         "dependencia": "",
         "radio": "◯ GSMR",
         "rampCaract": "18",
+        "csv": false,
         "notes": []
       },
       {
         "id": "sn-data-0030",
         "type": "data",
-        "reseau": "ADIF",
+        "reseau": "",
         "pkInterne": "662.5",
         "pkAdif": "",
         "pkLfp": "",
@@ -1372,12 +1456,13 @@ export const LIGNE_FT_NORMALIZED: LigneFTNormalized = {
         "dependencia": "LLINARS-A. V",
         "radio": "◯ GSMR",
         "rampCaract": "18",
+        "csv": false,
         "notes": []
       },
       {
         "id": "sn-data-0031",
         "type": "data",
-        "reseau": "ADIF",
+        "reseau": "",
         "pkInterne": "673.5",
         "pkAdif": "",
         "pkLfp": "",
@@ -1388,12 +1473,13 @@ export const LIGNE_FT_NORMALIZED: LigneFTNormalized = {
         "dependencia": "",
         "radio": "◯ GSMR",
         "rampCaract": "18",
+        "csv": false,
         "notes": []
       },
       {
         "id": "sn-data-0032",
         "type": "data",
-        "reseau": "ADIF",
+        "reseau": "",
         "pkInterne": "679.3",
         "pkAdif": "",
         "pkLfp": "",
@@ -1404,12 +1490,13 @@ export const LIGNE_FT_NORMALIZED: LigneFTNormalized = {
         "dependencia": "RIELLS-A. V",
         "radio": "◯ GSMR",
         "rampCaract": "18",
+        "csv": false,
         "notes": []
       },
       {
         "id": "sn-data-0033",
         "type": "data",
-        "reseau": "ADIF",
+        "reseau": "",
         "pkInterne": "680.2",
         "pkAdif": "",
         "pkLfp": "",
@@ -1420,12 +1507,13 @@ export const LIGNE_FT_NORMALIZED: LigneFTNormalized = {
         "dependencia": "",
         "radio": "◯ GSMR",
         "rampCaract": "18",
+        "csv": false,
         "notes": []
       },
       {
         "id": "sn-data-0034",
         "type": "data",
-        "reseau": "ADIF",
+        "reseau": "",
         "pkInterne": "682.0",
         "pkAdif": "",
         "pkLfp": "",
@@ -1436,12 +1524,13 @@ export const LIGNE_FT_NORMALIZED: LigneFTNormalized = {
         "dependencia": "BASE MTO. RIELLS",
         "radio": "◯ GSMR",
         "rampCaract": "18",
+        "csv": false,
         "notes": []
       },
       {
         "id": "sn-data-0035",
         "type": "data",
-        "reseau": "ADIF",
+        "reseau": "",
         "pkInterne": "684.0",
         "pkAdif": "",
         "pkLfp": "",
@@ -1452,12 +1541,13 @@ export const LIGNE_FT_NORMALIZED: LigneFTNormalized = {
         "dependencia": "",
         "radio": "◯ GSMR",
         "rampCaract": "18",
+        "csv": false,
         "notes": []
       },
       {
         "id": "sn-data-0036",
         "type": "data",
-        "reseau": "ADIF",
+        "reseau": "",
         "pkInterne": "703.5",
         "pkAdif": "",
         "pkLfp": "",
@@ -1468,12 +1558,13 @@ export const LIGNE_FT_NORMALIZED: LigneFTNormalized = {
         "dependencia": "VILOBI D'ONYAR",
         "radio": "◯ GSMR",
         "rampCaract": "18",
+        "csv": false,
         "notes": []
       },
       {
         "id": "sn-data-0037",
         "type": "data",
-        "reseau": "ADIF",
+        "reseau": "",
         "pkInterne": "707.1",
         "pkAdif": "",
         "pkLfp": "",
@@ -1484,12 +1575,13 @@ export const LIGNE_FT_NORMALIZED: LigneFTNormalized = {
         "dependencia": "",
         "radio": "◯ GSMR",
         "rampCaract": "18",
+        "csv": false,
         "notes": []
       },
       {
         "id": "sn-data-0038",
         "type": "data",
-        "reseau": "ADIF",
+        "reseau": "",
         "pkInterne": "709.9",
         "pkAdif": "",
         "pkLfp": "",
@@ -1500,12 +1592,13 @@ export const LIGNE_FT_NORMALIZED: LigneFTNormalized = {
         "dependencia": "",
         "radio": "◯ GSMR",
         "rampCaract": "18",
+        "csv": false,
         "notes": []
       },
       {
         "id": "sn-data-0039",
         "type": "data",
-        "reseau": "ADIF",
+        "reseau": "",
         "pkInterne": "710.7",
         "pkAdif": "",
         "pkLfp": "",
@@ -1516,12 +1609,13 @@ export const LIGNE_FT_NORMALIZED: LigneFTNormalized = {
         "dependencia": "BIF. GIRONA-MERCADERIES",
         "radio": "◯ GSMR",
         "rampCaract": "18",
+        "csv": false,
         "notes": []
       },
       {
         "id": "sn-data-0040",
         "type": "data",
-        "reseau": "ADIF",
+        "reseau": "",
         "pkInterne": "713.2",
         "pkAdif": "",
         "pkLfp": "",
@@ -1532,12 +1626,13 @@ export const LIGNE_FT_NORMALIZED: LigneFTNormalized = {
         "dependencia": "",
         "radio": "◯ GSMR",
         "rampCaract": "18",
+        "csv": false,
         "notes": []
       },
       {
         "id": "sn-data-0041",
         "type": "data",
-        "reseau": "ADIF",
+        "reseau": "",
         "pkInterne": "714.7",
         "pkAdif": "",
         "pkLfp": "",
@@ -1548,12 +1643,13 @@ export const LIGNE_FT_NORMALIZED: LigneFTNormalized = {
         "dependencia": "GIRONA",
         "radio": "◯ GSMR",
         "rampCaract": "18",
+        "csv": true,
         "notes": []
       },
       {
         "id": "sn-data-0042",
         "type": "data",
-        "reseau": "ADIF",
+        "reseau": "",
         "pkInterne": "715.5",
         "pkAdif": "",
         "pkLfp": "",
@@ -1564,12 +1660,13 @@ export const LIGNE_FT_NORMALIZED: LigneFTNormalized = {
         "dependencia": "",
         "radio": "◯ GSMR",
         "rampCaract": "18",
+        "csv": true,
         "notes": []
       },
       {
         "id": "sn-data-0043",
         "type": "data",
-        "reseau": "ADIF",
+        "reseau": "",
         "pkInterne": "716.8",
         "pkAdif": "",
         "pkLfp": "",
@@ -1580,12 +1677,13 @@ export const LIGNE_FT_NORMALIZED: LigneFTNormalized = {
         "dependencia": "",
         "radio": "◯ GSMR",
         "rampCaract": "18",
+        "csv": false,
         "notes": []
       },
       {
         "id": "sn-data-0044",
         "type": "data",
-        "reseau": "ADIF",
+        "reseau": "",
         "pkInterne": "720.0",
         "pkAdif": "",
         "pkLfp": "",
@@ -1596,12 +1694,13 @@ export const LIGNE_FT_NORMALIZED: LigneFTNormalized = {
         "dependencia": "",
         "radio": "◯ GSMR",
         "rampCaract": "18",
+        "csv": false,
         "notes": []
       },
       {
         "id": "sn-data-0045",
         "type": "data",
-        "reseau": "ADIF",
+        "reseau": "",
         "pkInterne": "723.7",
         "pkAdif": "",
         "pkLfp": "",
@@ -1612,12 +1711,13 @@ export const LIGNE_FT_NORMALIZED: LigneFTNormalized = {
         "dependencia": "",
         "radio": "◯ GSMR",
         "rampCaract": "18",
+        "csv": false,
         "notes": []
       },
       {
         "id": "sn-note-0046",
         "type": "note",
-        "reseau": "ADIF",
+        "reseau": "",
         "pkInterne": "",
         "pkAdif": "",
         "pkLfp": "",
@@ -1628,6 +1728,7 @@ export const LIGNE_FT_NORMALIZED: LigneFTNormalized = {
         "dependencia": "",
         "radio": "◯ GSMR",
         "rampCaract": "18",
+        "csv": false,
         "notes": [
           "80 AL PASO VIAS 3, 4 Y 6",
           "50 AL PASO VIA 7"
@@ -1636,7 +1737,7 @@ export const LIGNE_FT_NORMALIZED: LigneFTNormalized = {
       {
         "id": "sn-data-0047",
         "type": "data",
-        "reseau": "ADIF",
+        "reseau": "",
         "pkInterne": "749.6",
         "pkAdif": "",
         "pkLfp": "",
@@ -1647,6 +1748,7 @@ export const LIGNE_FT_NORMALIZED: LigneFTNormalized = {
         "dependencia": "FIGUERES-VILAFANT",
         "radio": "◯ GSMR",
         "rampCaract": "18",
+        "csv": false,
         "notes": []
       },
       {
@@ -1657,12 +1759,13 @@ export const LIGNE_FT_NORMALIZED: LigneFTNormalized = {
         "pkAdif": "752.4",
         "pkLfp": "44.4",
         "pkRfn": "",
-        "bloqueo": "ERTMS Niv. 1",
+        "bloqueo": "",
         "vmax": "300",
         "sitKm": "752.4",
         "dependencia": "LIMITE ADIF - LFPSA",
         "radio": "◯ GSMR",
         "rampCaract": "18",
+        "csv": false,
         "notes": []
       },
       {
@@ -1679,6 +1782,7 @@ export const LIGNE_FT_NORMALIZED: LigneFTNormalized = {
         "dependencia": "TETE SUD TUNNEL",
         "radio": "◯ GSMR",
         "rampCaract": "18",
+        "csv": false,
         "notes": []
       },
       {
@@ -1695,6 +1799,7 @@ export const LIGNE_FT_NORMALIZED: LigneFTNormalized = {
         "dependencia": "FRONTIERE",
         "radio": "◯ GSMR",
         "rampCaract": "18",
+        "csv": false,
         "notes": []
       },
       {
@@ -1711,6 +1816,7 @@ export const LIGNE_FT_NORMALIZED: LigneFTNormalized = {
         "dependencia": "TETE NORD TUNNEL",
         "radio": "◯ GSMR",
         "rampCaract": "12",
+        "csv": false,
         "notes": []
       },
       {
@@ -1727,6 +1833,7 @@ export const LIGNE_FT_NORMALIZED: LigneFTNormalized = {
         "dependencia": "SAUT DE MOUTON",
         "radio": "◯ GSMR",
         "rampCaract": "12",
+        "csv": false,
         "notes": []
       },
       {
@@ -1737,12 +1844,13 @@ export const LIGNE_FT_NORMALIZED: LigneFTNormalized = {
         "pkAdif": "",
         "pkLfp": "",
         "pkRfn": "473.3",
-        "bloqueo": "BAL KVB",
+        "bloqueo": "",
         "vmax": "160",
         "sitKm": "799.7",
         "dependencia": "LIMITE RFN - LFPSA",
         "radio": "◯ GSMR",
         "rampCaract": "0",
+        "csv": false,
         "notes": []
       },
       {
@@ -1759,6 +1867,7 @@ export const LIGNE_FT_NORMALIZED: LigneFTNormalized = {
         "dependencia": "LIMITE RAC - LFP-FRR",
         "radio": "◯ GSMR",
         "rampCaract": "0",
+        "csv": false,
         "notes": []
       },
       {
@@ -1775,6 +1884,7 @@ export const LIGNE_FT_NORMALIZED: LigneFTNormalized = {
         "dependencia": "PERPIGNAN",
         "radio": "◯ GSMR",
         "rampCaract": "0",
+        "csv": false,
         "notes": []
       }
     ]
