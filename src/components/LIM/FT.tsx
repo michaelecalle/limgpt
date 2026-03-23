@@ -3440,11 +3440,115 @@ logTestEvent("gps:mode-check", {
             if (isNewAnchor) {
               lastAnchoredRowRef.current = idx;
 
+              // ===== DEBUG DIAGNOSTIC ancre GPS -> ligne FT -> heure =====
+              const prevEntry1 = idx - 1 >= 0 ? rawEntries[idx - 1] : null;
+              const prevEntry2 = idx - 2 >= 0 ? rawEntries[idx - 2] : null;
+              const nextEntry1 = idx + 1 < rawEntries.length ? rawEntries[idx + 1] : null;
+              const nextEntry2 = idx + 2 < rawEntries.length ? rawEntries[idx + 2] : null;
+
+              const departHoraText = resolveHoraForRowIndex(idx);
+              const departMinutes = parseHoraToMinutes(departHoraText);
+
+              logTestEvent("ft:delta:gps-anchor-debug", {
+                pkGpsUsed: pk,
+                pkGpsRaw: pkRaw ?? null,
+                s_km: (detail as any)?.s_km ?? null,
+                acceptedMode,
+                isRelock,
+
+                chosenIndex: idx,
+                chosenRow: {
+                  pk: (entry as any)?.pk ?? null,
+                  pk_rfn: (entry as any)?.pk_rfn ?? null,
+                  pk_lfp: (entry as any)?.pk_lfp ?? null,
+                  pk_adif: (entry as any)?.pk_adif ?? null,
+                  network: (entry as any)?.network ?? null,
+                  dependencia: (entry as any)?.dependencia ?? null,
+                  hora: (entry as any)?.hora ?? null,
+                },
+
+                resolvedDeparture: {
+                  text: departHoraText || null,
+                  minutes: departMinutes ?? null,
+                },
+
+                neighbors: [
+                  prevEntry2
+                    ? {
+                        offset: -2,
+                        pk: (prevEntry2 as any)?.pk ?? null,
+                        pk_rfn: (prevEntry2 as any)?.pk_rfn ?? null,
+                        pk_lfp: (prevEntry2 as any)?.pk_lfp ?? null,
+                        pk_adif: (prevEntry2 as any)?.pk_adif ?? null,
+                        network: (prevEntry2 as any)?.network ?? null,
+                        dependencia: (prevEntry2 as any)?.dependencia ?? null,
+                        hora: (prevEntry2 as any)?.hora ?? null,
+                      }
+                    : null,
+                  prevEntry1
+                    ? {
+                        offset: -1,
+                        pk: (prevEntry1 as any)?.pk ?? null,
+                        pk_rfn: (prevEntry1 as any)?.pk_rfn ?? null,
+                        pk_lfp: (prevEntry1 as any)?.pk_lfp ?? null,
+                        pk_adif: (prevEntry1 as any)?.pk_adif ?? null,
+                        network: (prevEntry1 as any)?.network ?? null,
+                        dependencia: (prevEntry1 as any)?.dependencia ?? null,
+                        hora: (prevEntry1 as any)?.hora ?? null,
+                      }
+                    : null,
+                  nextEntry1
+                    ? {
+                        offset: 1,
+                        pk: (nextEntry1 as any)?.pk ?? null,
+                        pk_rfn: (nextEntry1 as any)?.pk_rfn ?? null,
+                        pk_lfp: (nextEntry1 as any)?.pk_lfp ?? null,
+                        pk_adif: (nextEntry1 as any)?.pk_adif ?? null,
+                        network: (nextEntry1 as any)?.network ?? null,
+                        dependencia: (nextEntry1 as any)?.dependencia ?? null,
+                        hora: (nextEntry1 as any)?.hora ?? null,
+                      }
+                    : null,
+                  nextEntry2
+                    ? {
+                        offset: 2,
+                        pk: (nextEntry2 as any)?.pk ?? null,
+                        pk_rfn: (nextEntry2 as any)?.pk_rfn ?? null,
+                        pk_lfp: (nextEntry2 as any)?.pk_lfp ?? null,
+                        pk_adif: (nextEntry2 as any)?.pk_adif ?? null,
+                        network: (nextEntry2 as any)?.network ?? null,
+                        dependencia: (nextEntry2 as any)?.dependencia ?? null,
+                        hora: (nextEntry2 as any)?.hora ?? null,
+                      }
+                    : null,
+                ].filter(Boolean),
+              });
+
+              console.log("[FT][gps-anchor-debug]", {
+                pkGpsUsed: pk,
+                pkGpsRaw: pkRaw ?? null,
+                s_km: (detail as any)?.s_km ?? null,
+                acceptedMode,
+                isRelock,
+                chosenIndex: idx,
+                chosenRow: {
+                  pk: (entry as any)?.pk ?? null,
+                  pk_rfn: (entry as any)?.pk_rfn ?? null,
+                  pk_lfp: (entry as any)?.pk_lfp ?? null,
+                  pk_adif: (entry as any)?.pk_adif ?? null,
+                  network: (entry as any)?.network ?? null,
+                  dependencia: (entry as any)?.dependencia ?? null,
+                  hora: (entry as any)?.hora ?? null,
+                },
+                resolvedDeparture: {
+                  text: departHoraText || null,
+                  minutes: departMinutes ?? null,
+                },
+              });
+
               // ✅ Définition métier d’un point d’ancrage GPS :
               // ligne portant une heure de départ RÉELLE (non interpolée),
               // qu’elle vienne du PDF Espagne ou des données fixes France.
-              const departHoraText = resolveHoraForRowIndex(idx);
-              const departMinutes = parseHoraToMinutes(departHoraText);
 
               const isGpsDeltaAnchor =
                 typeof departHoraText === "string" &&
